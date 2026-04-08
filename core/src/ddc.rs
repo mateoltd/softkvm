@@ -107,6 +107,61 @@ pub mod real {
             format!("{mfg}:{model}:{serial}")
         }
 
+        /// count how many fields have real (non-placeholder) values
+        fn metadata_score(mon: &MonitorInfo) -> u8 {
+            let mut score = 0u8;
+            if mon.manufacturer != "Unknown" && mon.manufacturer != "UNK" {
+                score += 1;
+            }
+            if mon.model != "Unknown" && mon.model != "UNK" {
+                score += 1;
+            }
+            if mon.serial != "Unknown" && mon.serial != "UNK" {
+                score += 1;
+            }
+            if mon.name != "Unknown" {
+                score += 1;
+            }
+            score
+        }
+
+        /// remove duplicate monitors that represent the same physical display
+        /// enumerated through different backends
+        fn deduplicate(monitors: &mut Vec<MonitorInfo>) {
+            let mut keep = vec![true; monitors.len()];
+            for i in 0..monitors.len() {
+                if !keep[i] {
+                    continue;
+                }
+                for j in (i + 1)..monitors.len() {
+                    if !keep[j] {
+                        continue;
+                    }
+                    // same current input on two entries means same physical monitor
+                    let same_input = monitors[i].current_input_vcp.is_some()
+                        && monitors[i].current_input_vcp == monitors[j].current_input_vcp;
+                    if !same_input {
+                        continue;
+                    }
+                    // keep the one with more metadata
+                    let score_i = Self::metadata_score(&monitors[i]);
+                    let score_j = Self::metadata_score(&monitors[j]);
+                    if score_i >= score_j {
+                        keep[j] = false;
+                    } else {
+                        keep[i] = false;
+                        break;
+                    }
+                }
+            }
+            let mut idx = 0;
+            monitors.retain(|_| {
+                let k = keep[idx];
+                idx += 1;
+                k
+            });
+        }
+
         /// find a display by our composite ID
         fn find_display(monitor_id: &str) -> Result<ddc_hi::Display> {
             for display in ddc_hi::Display::enumerate() {
@@ -171,6 +226,13 @@ pub mod real {
                     ddc_supported,
                 });
             }
+
+            // ddc-hi can enumerate the same physical monitor through multiple
+            // backends (e.g. Monitor Configuration API and I2C on Windows).
+            // deduplicate by current_input_vcp, keeping the entry with the
+            // most metadata (non-UNK fields)
+            Self::deduplicate(&mut monitors);
+
             Ok(monitors)
         }
 

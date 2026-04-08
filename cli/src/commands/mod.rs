@@ -1,3 +1,4 @@
+pub mod identify;
 pub mod scan;
 pub mod setup;
 pub mod status;

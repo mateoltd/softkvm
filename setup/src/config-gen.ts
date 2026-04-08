@@ -5,7 +5,7 @@ export interface SetupAnswers {
   serverName?: string;
   serverAddress?: string;
   monitors: MonitorSetup[];
-  layout: LayoutSetup;
+  layout?: LayoutSetup;
 }
 
 export interface MonitorSetup {
@@ -63,12 +63,14 @@ export function generateConfig(answers: SetupAnswers): string {
     lines.push(``);
     lines.push(`[monitor.inputs]`);
     lines.push(`"${answers.machineName}" = "${mon.localInput}"`);
-    lines.push(`"${mon.remoteMachineName}" = "${mon.remoteInput}"`);
+    if (mon.remoteMachineName && mon.remoteInput) {
+      lines.push(`"${mon.remoteMachineName}" = "${mon.remoteInput}"`);
+    }
     lines.push(``);
   }
 
-  // layout
-  if (answers.serverName) {
+  // layout (only if we have a remote machine and direction)
+  if (answers.layout && answers.serverName) {
     const opposite: Record<string, string> = {
       left: "right",
       right: "left",
