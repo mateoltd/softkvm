@@ -36,6 +36,7 @@ main() {
     exit 1
   fi
 
+  install_m1ddc
   register_path
   echo ""
   info "installed to ${INSTALL_DIR}"
@@ -165,6 +166,49 @@ try_source_install() {
     fi
   fi
 
+  return 0
+}
+
+install_m1ddc() {
+  # m1ddc is Apple Silicon only, provides DDC/CI through paths that
+  # ddc-hi/IOKit misses (USB-C adapters, etc.)
+  if [ "${OS}" != "Darwin" ] || [ "${ARCH}" != "arm64" ]; then
+    return 0
+  fi
+
+  # already installed?
+  if [ -f "${INSTALL_DIR}/m1ddc" ]; then
+    info "m1ddc already installed"
+    return 0
+  fi
+
+  # need clang (ships with Xcode command line tools on every Mac)
+  if ! command -v clang &>/dev/null; then
+    warn "clang not found, skipping m1ddc (install Xcode command line tools)"
+    return 0
+  fi
+
+  local m1ddc_dir
+  m1ddc_dir="$(mktemp -d)"
+
+  info "building m1ddc (Apple Silicon DDC backend)"
+  if git clone --depth 1 https://github.com/waydabber/m1ddc.git "${m1ddc_dir}" 2>/dev/null; then
+    if (cd "${m1ddc_dir}" && make binary 2>/dev/null); then
+      if [ -f "${m1ddc_dir}/m1ddc" ]; then
+        cp "${m1ddc_dir}/m1ddc" "${INSTALL_DIR}/"
+        chmod +x "${INSTALL_DIR}/m1ddc"
+        info "m1ddc installed"
+      else
+        warn "m1ddc build produced no binary"
+      fi
+    else
+      warn "m1ddc build failed (DDC will use ddc-hi only)"
+    fi
+  else
+    warn "could not clone m1ddc repository"
+  fi
+
+  rm -rf "${m1ddc_dir}"
   return 0
 }
 
