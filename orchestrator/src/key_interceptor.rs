@@ -20,7 +20,7 @@ pub enum KeyEvent {
     Stopped,
 }
 
-/// shared state for the interceptor — tracks active modifiers and the current
+/// shared state for the interceptor, tracks active modifiers and the current
 /// OS pair context so it knows which rules to apply
 pub struct InterceptorState {
     /// which OS is running locally
@@ -111,15 +111,20 @@ impl KeyInterceptor {
             });
         }
 
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(target_os = "linux")]
         {
-            // on linux or other platforms, no keyboard hook — log and continue
             let _ = (state, tx);
-            tracing::info!("key interceptor: no OS hook available on this platform (stub mode)");
+            anyhow::bail!(
+                "key interceptor is not supported on Linux. \
+                 keyboard remapping requires Windows or macOS"
+            );
         }
 
-        tracing::info!("key interceptor initialized");
-        Ok(())
+        #[cfg(not(target_os = "linux"))]
+        {
+            tracing::info!("key interceptor started");
+            Ok(())
+        }
     }
 
     /// update the remote OS context (call on screen transitions)
@@ -152,24 +157,32 @@ impl KeyInterceptor {
     }
 }
 
-// --- platform-specific hooks ---
+// --- Windows: low-level keyboard hook via SetWindowsHookEx(WH_KEYBOARD_LL) ---
 
-/// Windows: low-level keyboard hook via SetWindowsHookEx(WH_KEYBOARD_LL)
-/// intercepts key events system-wide, checks against translation rules,
-/// suppresses + synthesizes translated combos when matched
 #[cfg(target_os = "windows")]
 fn run_windows_hook(
     state: Arc<Mutex<InterceptorState>>,
     tx: mpsc::Sender<KeyEvent>,
 ) -> anyhow::Result<()> {
-    use std::ptr;
+    use softkvm_core::keymap::{combo_from_vk, key_name_to_vk, modifier_to_vk};
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
-    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_KEYUP, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RMENU,
+        VK_RSHIFT, VK_RWIN,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
+        UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    };
 
-    // store state in thread-local for the hook callback
+    // thread-local storage for the hook callback (extern "system" fns can't capture)
     thread_local! {
-        static HOOK_STATE: std::cell::RefCell<Option<(Arc<Mutex<InterceptorState>>, mpsc::Sender<KeyEvent>)>> = std::cell::RefCell::new(None);
+        static HOOK_STATE: std::cell::RefCell<Option<(
+            Arc<Mutex<InterceptorState>>,
+            mpsc::Sender<KeyEvent>,
+        )>> = const { std::cell::RefCell::new(None) };
+        static SUPPRESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     HOOK_STATE.with(|h| {
@@ -177,46 +190,78 @@ fn run_windows_hook(
     });
 
     unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RMENU,
+            VK_RSHIFT, VK_RWIN,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CallNextHookEx, KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_SYSKEYDOWN,
+        };
+
         if code >= 0 {
             let kb = &*(lparam as *const KBDLLHOOKSTRUCT);
             let is_keydown = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
 
             if is_keydown {
-                HOOK_STATE.with(|h| {
-                    if let Some((ref state, ref tx)) = *h.borrow() {
-                        if let Ok(state) = state.lock() {
-                            // build current combo from pressed key + tracked modifiers
-                            let combo = vk_to_combo(kb.vkCode);
-                            if let Some(combo) = combo {
+                let modifier_vks: &[u32] = &[
+                    VK_LCONTROL as u32,
+                    VK_RCONTROL as u32,
+                    VK_LMENU as u32,
+                    VK_RMENU as u32,
+                    VK_LSHIFT as u32,
+                    VK_RSHIFT as u32,
+                    VK_LWIN as u32,
+                    VK_RWIN as u32,
+                ];
+
+                let modifier_states: Vec<(u32, bool)> = modifier_vks
+                    .iter()
+                    .map(|&vk| (vk, GetAsyncKeyState(vk as i32) < 0))
+                    .collect();
+
+                if let Some(combo) =
+                    softkvm_core::keymap::combo_from_vk(kb.vkCode, &modifier_states)
+                {
+                    HOOK_STATE.with(|h| {
+                        if let Some((ref state, ref tx)) = *h.borrow() {
+                            if let Ok(state) = state.lock() {
                                 if let Some(rule) = state.translate(&combo) {
-                                    // suppress original and synthesize translation
-                                    synthesize_combo_windows(&rule.to);
-                                    let _ = tx.blocking_send(KeyEvent::Translated {
+                                    SUPPRESS.with(|s| s.set(true));
+                                    let _ = tx.blocking_send(super::KeyEvent::Translated {
                                         intent: rule.intent.clone(),
                                         from: rule.from.clone(),
                                         to: rule.to.clone(),
                                     });
-                                    // return 1 to suppress the original key
-                                    return;
+                                    synthesize_combo_windows(&rule.to);
                                 }
                             }
                         }
+                    });
+
+                    if SUPPRESS.with(|s| {
+                        let v = s.get();
+                        s.set(false);
+                        v
+                    }) {
+                        return 1; // suppress original key
                     }
-                });
+                }
             }
         }
-        CallNextHookEx(0, code, wparam, lparam)
+        CallNextHookEx(0 as isize, code, wparam, lparam)
     }
 
+    let _ = tx.blocking_send(KeyEvent::Started);
+
     unsafe {
-        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), 0, 0);
+        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), 0 as isize, 0);
         if hook == 0 {
             anyhow::bail!("SetWindowsHookExW failed");
         }
 
         // message loop required for low-level hooks
         let mut msg: MSG = std::mem::zeroed();
-        while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+        while GetMessageW(&mut msg, 0 as isize, 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -228,24 +273,72 @@ fn run_windows_hook(
 }
 
 #[cfg(target_os = "windows")]
-fn vk_to_combo(_vk: u32) -> Option<KeyCombo> {
-    // TODO: map virtual key codes to KeyCombo by checking GetAsyncKeyState
-    // for modifier keys (VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU,
-    // VK_LWIN, VK_RWIN, VK_SHIFT) and combining with the pressed key
-    None
+fn synthesize_combo_windows(combo: &KeyCombo) {
+    use softkvm_core::keymap::{key_name_to_vk, modifier_to_vk};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    };
+
+    let main_vk = match key_name_to_vk(&combo.key) {
+        Some(vk) => vk,
+        None => return,
+    };
+
+    let mut inputs: Vec<INPUT> = Vec::new();
+
+    // press modifiers
+    for m in &combo.modifiers {
+        let vk = modifier_to_vk(m);
+        inputs.push(make_key_input(vk as u16, 0));
+    }
+
+    // press main key
+    inputs.push(make_key_input(main_vk as u16, 0));
+
+    // release main key
+    inputs.push(make_key_input(main_vk as u16, KEYEVENTF_KEYUP));
+
+    // release modifiers (reverse order)
+    for m in combo.modifiers.iter().rev() {
+        let vk = modifier_to_vk(m);
+        inputs.push(make_key_input(vk as u16, KEYEVENTF_KEYUP));
+    }
+
+    unsafe {
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        );
+    }
 }
 
 #[cfg(target_os = "windows")]
-fn synthesize_combo_windows(_combo: &KeyCombo) {
-    // TODO: use SendInput to synthesize the translated key combo
-    // 1. press modifier keys
-    // 2. press the main key
-    // 3. release the main key
-    // 4. release modifier keys
+fn make_key_input(
+    vk: u16,
+    flags: windows_sys::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS,
+) -> windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+    };
+
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
-/// macOS: event tap via CGEventTap for system-wide key interception
-/// requires Accessibility permissions (System Preferences > Privacy > Accessibility)
+// --- macOS: event tap via CGEventTap for system-wide key interception ---
+// requires Accessibility permissions (System Preferences > Privacy > Accessibility)
+
 #[cfg(target_os = "macos")]
 fn run_macos_hook(
     state: Arc<Mutex<InterceptorState>>,
@@ -256,6 +349,7 @@ fn run_macos_hook(
         CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
         EventField,
     };
+    use softkvm_core::keymap::{combo_from_cg, key_name_to_cg_keycode, modifier_to_cg_flag};
 
     let state_clone = Arc::clone(&state);
     let tx_clone = tx.clone();
@@ -266,19 +360,18 @@ fn run_macos_hook(
         CGEventTapOptions::Default,
         vec![CGEventType::KeyDown],
         move |_proxy, _type, event| {
-            let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+            let keycode =
+                event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
             let flags = event.get_flags();
 
             if let Ok(state) = state_clone.lock() {
-                let combo = cg_to_combo(keycode, flags);
-                if let Some(combo) = combo {
+                if let Some(combo) = combo_from_cg(keycode, flags.bits()) {
                     if let Some(rule) = state.translate(&combo) {
                         let _ = tx_clone.blocking_send(KeyEvent::Translated {
                             intent: rule.intent.clone(),
                             from: rule.from.clone(),
                             to: rule.to.clone(),
                         });
-                        // return a new event with the translated combo
                         return synthesize_combo_macos(&rule.to);
                     }
                 }
@@ -288,8 +381,10 @@ fn run_macos_hook(
         },
     )
     .map_err(|_| {
-        anyhow::anyhow!("failed to create CGEventTap -- check Accessibility permissions")
+        anyhow::anyhow!("failed to create CGEventTap. grant Accessibility permissions in System Settings > Privacy & Security > Accessibility")
     })?;
+
+    let _ = tx.blocking_send(KeyEvent::Started);
 
     let source = tap.mach_port_source();
     let run_loop = CFRunLoop::get_current();
@@ -301,16 +396,24 @@ fn run_macos_hook(
 }
 
 #[cfg(target_os = "macos")]
-fn cg_to_combo(_keycode: u16, _flags: u64) -> Option<KeyCombo> {
-    // TODO: map CGEvent keycode + flags to KeyCombo
-    // flags contains modifier state (kCGEventFlagMaskCommand, kCGEventFlagMaskControl, etc.)
-    None
-}
+fn synthesize_combo_macos(combo: &KeyCombo) -> Option<core_graphics::event::CGEvent> {
+    use core_graphics::event::{CGEvent, CGEventFlags, EventField};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    use softkvm_core::keymap::{key_name_to_cg_keycode, modifier_to_cg_flag};
 
-#[cfg(target_os = "macos")]
-fn synthesize_combo_macos(_combo: &KeyCombo) -> Option<core_graphics::event::CGEvent> {
-    // TODO: create a new CGEvent with the translated keycode + modifier flags
-    None
+    let keycode = key_name_to_cg_keycode(&combo.key)?;
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+    let event = CGEvent::new_keyboard_event(source, keycode, true).ok()?;
+
+    // combine all modifier flags
+    let mut flags_bits: u64 = 0;
+    for m in &combo.modifiers {
+        flags_bits |= modifier_to_cg_flag(m);
+    }
+    event.set_flags(CGEventFlags::from_bits_truncate(flags_bits));
+
+    Some(event)
 }
 
 #[cfg(test)]
@@ -370,7 +473,7 @@ mod tests {
         state.set_remote_os(None);
         assert!(state.rules.is_empty());
 
-        // same OS pair — no translations needed
+        // same OS pair, no translations needed
         state.set_remote_os(Some(OsType::MacOS));
         assert!(state.rules.is_empty());
     }
@@ -391,12 +494,9 @@ mod tests {
         assert_eq!(result.to.key, "F4");
     }
 
-    #[tokio::test]
-    async fn test_key_interceptor_lifecycle() {
+    #[test]
+    fn test_key_interceptor_new() {
         let interceptor = KeyInterceptor::new(OsType::MacOS, default_translations(), true);
-
-        // start in stub mode on linux
-        assert!(interceptor.start().is_ok());
 
         // set remote OS
         interceptor.set_remote_os(Some(OsType::Windows));
@@ -412,5 +512,17 @@ mod tests {
         interceptor.set_enabled(false);
         let guard = state.lock().unwrap();
         assert!(!guard.enabled);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_key_interceptor_fails_on_linux() {
+        let interceptor = KeyInterceptor::new(OsType::Linux, default_translations(), true);
+        let result = interceptor.start();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not supported on Linux"));
     }
 }
