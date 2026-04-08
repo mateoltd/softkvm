@@ -317,15 +317,21 @@ mod mac_hook {
     use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
     use core_graphics::event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
-        CGEventTapPlacement, CGEventType, EventField,
+        CGEventTapPlacement, CGEventType, CallbackResult, EventField,
     };
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use softkvm_core::keymap::{combo_from_cg, key_name_to_cg_keycode, modifier_to_cg_flag};
 
-    fn synthesize_combo(combo: &KeyCombo) -> Option<CGEvent> {
-        let keycode = key_name_to_cg_keycode(&combo.key)?;
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
-        let event = CGEvent::new_keyboard_event(source, keycode, true).ok()?;
+    fn synthesize_combo(combo: &KeyCombo) -> CallbackResult {
+        let Some(keycode) = key_name_to_cg_keycode(&combo.key) else {
+            return CallbackResult::Keep;
+        };
+        let Ok(source) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
+            return CallbackResult::Keep;
+        };
+        let Ok(event) = CGEvent::new_keyboard_event(source, keycode, true) else {
+            return CallbackResult::Keep;
+        };
 
         let mut flags_bits: u64 = 0;
         for m in &combo.modifiers {
@@ -333,7 +339,7 @@ mod mac_hook {
         }
         event.set_flags(CGEventFlags::from_bits_truncate(flags_bits));
 
-        Some(event)
+        CallbackResult::Replace(event)
     }
 
     pub fn run(
@@ -345,7 +351,7 @@ mod mac_hook {
 
         let tap = CGEventTap::new(
             CGEventTapLocation::Session,
-            CGEventTapPlacement::HeadInsert,
+            CGEventTapPlacement::HeadInsertEventTap,
             CGEventTapOptions::Default,
             vec![CGEventType::KeyDown],
             move |_proxy, _type, event| {
@@ -366,7 +372,7 @@ mod mac_hook {
                     }
                 }
 
-                Some(event)
+                CallbackResult::Keep
             },
         )
         .map_err(|_| {
@@ -378,7 +384,8 @@ mod mac_hook {
 
         let _ = tx.blocking_send(KeyEvent::Started);
 
-        let source = tap.mach_port_source();
+        let source = tap.mach_port().create_runloop_source(0)
+            .map_err(|_| anyhow::anyhow!("failed to create run loop source from event tap"))?;
         let run_loop = CFRunLoop::get_current();
         run_loop.add_source(&source, unsafe { kCFRunLoopCommonModes });
         tap.enable();
