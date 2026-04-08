@@ -44,7 +44,7 @@ pub async fn run(json: bool) -> Result<()> {
 
         println!("found {} monitor(s) with DDC/CI support:\n", monitors.len());
 
-        for m in &monitors {
+        for (i, m) in monitors.iter().enumerate() {
             let input_str = match m.current_input_vcp {
                 Some(vcp) => {
                     let label = InputSource::from_vcp_value(vcp);
@@ -59,7 +59,8 @@ pub async fn run(json: bool) -> Result<()> {
                 "unavailable"
             };
 
-            println!("  {} {}", m.name, m.id);
+            println!("  [{}] {}", i + 1, m.name);
+            println!("    id:            {}", m.id);
             println!("    manufacturer:  {}", m.manufacturer);
             println!("    model:         {}", m.model);
             println!("    serial:        {}", m.serial);

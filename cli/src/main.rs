@@ -32,10 +32,10 @@ enum Commands {
         #[arg(short, long, default_value = "softkvm.toml")]
         config: String,
     },
-    /// identify a monitor by briefly blanking it
+    /// identify a monitor by briefly blanking it (interactive if no ID given)
     Identify {
-        /// monitor ID (from scan output)
-        monitor_id: String,
+        /// monitor ID (from scan output), omit for interactive mode
+        monitor_id: Option<String>,
     },
     /// show current system status
     Status,
@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Scan { json } => commands::scan::run(json).await,
         Commands::Switch { monitor_id, input } => commands::switch::run(&monitor_id, &input).await,
-        Commands::Identify { monitor_id } => commands::identify::run(&monitor_id).await,
+        Commands::Identify { monitor_id } => commands::identify::run(monitor_id.as_deref()).await,
         Commands::ValidateConfig { config } => commands::validate::run(&config),
         Commands::Status => commands::status::run().await,
         Commands::Update => commands::update::run().await,

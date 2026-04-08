@@ -212,25 +212,35 @@ async function main() {
 
     // offer to identify monitors if there are multiple
     if (monitors.length > 1) {
-      const wantIdentify = await p.confirm({
-        message: "want to identify monitors? (each screen will blank briefly so you can tell which is which)",
-        initialValue: true,
-      });
+      let identifying = true;
+      while (identifying) {
+        const identifyChoice = await p.select({
+          message: "want to identify which screen is which? (blanks each monitor briefly)",
+          options: [
+            ...monitors.map((mon) => {
+              const label = labels.get(mon.id) ?? mon.id;
+              const hint = monitorHint(mon);
+              return {
+                value: mon.id,
+                label: `blank "${label}"`,
+                hint: hint || undefined,
+              };
+            }),
+            { value: "__skip__", label: "skip identification" },
+          ],
+        });
 
-      if (!p.isCancel(wantIdentify) && wantIdentify) {
-        for (const mon of monitors) {
+        if (p.isCancel(identifyChoice) || identifyChoice === "__skip__") {
+          identifying = false;
+        } else {
+          const mon = monitors.find((m) => m.id === identifyChoice)!;
           const label = labels.get(mon.id) ?? mon.id;
-          const hint = monitorHint(mon);
-          const go = await p.confirm({
-            message: `blank "${label}"${hint ? ` (${hint})` : ""}? watch your screens`,
-            initialValue: true,
-          });
-          if (p.isCancel(go)) break;
-          if (go) {
-            spinner.start(`blanking "${label}" for 3 seconds...`);
-            await identifyMonitor(mon.id);
-            spinner.stop(`"${label}" identification done`);
-          }
+          p.log.warn(
+            `blanking "${label}" for 3 seconds. if your current screen goes dark, that's this one.`
+          );
+          spinner.start(`blanking "${label}"...`);
+          await identifyMonitor(mon.id);
+          spinner.stop(`"${label}" restored`);
         }
       }
     }
