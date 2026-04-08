@@ -35,6 +35,7 @@ function Main {
         return
     }
 
+    Install-Deskflow
     Register-Path
     Write-Host ""
     Info "installed to $InstallDir"
@@ -125,22 +126,37 @@ function Try-SourceInstall {
         }
         if ($copied -eq 0) { throw "no binaries were produced by the build" }
 
-        # build the setup TUI while we still have the source tree
-        if (Get-Command bun -ErrorAction SilentlyContinue) {
-            $setupDir = Join-Path $buildDir "setup"
-            if (Test-Path "$setupDir\package.json") {
-                Info "building setup wizard"
+        # bundle the setup TUI while we still have the source tree
+        $setupSrc = Join-Path $buildDir "setup"
+        if (Test-Path "$setupSrc\package.json") {
+            $bundler = $null
+            if (Get-Command bun -ErrorAction SilentlyContinue) { $bundler = "bun" }
+            elseif (Get-Command npx -ErrorAction SilentlyContinue) { $bundler = "npx" }
+
+            if ($bundler) {
+                Info "bundling setup wizard"
+                $setupDest = Join-Path (Split-Path $InstallDir -Parent) "setup"
+                New-Item -ItemType Directory -Force -Path $setupDest | Out-Null
                 try {
-                    Push-Location $setupDir
-                    bun install --silent 2>$null
-                    bun run build 2>$null
-                    $setupBin = "$setupDir\dist\softkvm-setup.exe"
-                    if (Test-Path $setupBin) {
-                        Copy-Item $setupBin "$InstallDir\softkvm-setup.exe" -Force
+                    Push-Location $setupSrc
+                    if ($bundler -eq "bun") {
+                        bun install --silent 2>$null
+                        bun build --outfile="$setupDest\setup.mjs" --target=node src/index.ts 2>$null
+                    } else {
+                        npm install --silent 2>$null
+                        npx esbuild --bundle --platform=node --format=esm --outfile="$setupDest\setup.mjs" src/index.ts 2>$null
                     }
                 }
-                catch { Warn "setup wizard build failed, skipping" }
+                catch {}
                 finally { Pop-Location }
+
+                if (Test-Path "$setupDest\setup.mjs") {
+                    # create a .cmd wrapper that invokes node
+                    $wrapper = "@echo off`r`nnode `"%~dp0..\setup\setup.mjs`" %*"
+                    Set-Content -Path "$InstallDir\softkvm-setup.cmd" -Value $wrapper -Encoding ASCII
+                } else {
+                    Warn "setup wizard build failed (will use manual setup)"
+                }
             }
         }
 
@@ -155,6 +171,56 @@ function Try-SourceInstall {
             Remove-Item $buildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+}
+
+function Install-Deskflow {
+    # check if deskflow-core is already in PATH
+    if (Get-Command deskflow-core -ErrorAction SilentlyContinue) {
+        Info "deskflow-core already installed"
+        return
+    }
+
+    # check known install locations
+    $knownPaths = @(
+        "$env:ProgramFiles\Deskflow\deskflow-core.exe"
+        "${env:ProgramFiles(x86)}\Deskflow\deskflow-core.exe"
+    )
+    foreach ($p in $knownPaths) {
+        if (Test-Path $p) {
+            Info "deskflow-core found at $p"
+            return
+        }
+    }
+
+    Info "installing deskflow (required for mouse/keyboard sharing)"
+
+    # try winget first
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        try {
+            $out = winget install --id=Deskflow.Deskflow -e --accept-package-agreements --accept-source-agreements 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Info "deskflow installed via winget"
+                return
+            }
+        }
+        catch {}
+    }
+
+    # try chocolatey
+    if (Get-Command choco -ErrorAction SilentlyContinue) {
+        try {
+            choco install deskflow -y 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Info "deskflow installed via chocolatey"
+                return
+            }
+        }
+        catch {}
+    }
+
+    Warn "could not install deskflow automatically"
+    Write-Host "  install manually: winget install --id=Deskflow.Deskflow -e"
+    Write-Host "  or download from: https://github.com/deskflow/deskflow/releases"
 }
 
 function Register-Path {
@@ -182,9 +248,9 @@ function Run-PostInstall {
     }
 
     # run interactive setup
-    $setupBin = "$InstallDir\softkvm-setup.exe"
-    if (Test-Path $setupBin) {
-        & $setupBin
+    $setupCmd = "$InstallDir\softkvm-setup.cmd"
+    if (Test-Path $setupCmd) {
+        & $setupCmd
     }
     else {
         Show-ManualSetup

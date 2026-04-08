@@ -441,6 +441,7 @@ async function main() {
 
   p.note(notes.join("\n"), "next steps");
   p.outro("setup complete");
+  process.exit(0);
 }
 
 // find a binary in PATH or known install directories
