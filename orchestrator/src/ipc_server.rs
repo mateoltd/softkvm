@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use softkvm_core::protocol::{DaemonState, JsonRpcRequest, JsonRpcResponse};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixListener;
 use tokio::sync::{mpsc, RwLock};
 
 /// commands the IPC server sends back to the main event loop
@@ -21,36 +20,72 @@ pub struct IpcState {
     pub cmd_tx: mpsc::Sender<IpcCommand>,
 }
 
-/// default socket path per platform
+/// default socket/address per platform
 pub fn default_socket_path() -> String {
-    if cfg!(target_os = "windows") {
-        r"\\.\pipe\SoftKvmIpc".into()
-    } else {
+    if cfg!(unix) {
         "/tmp/softkvm.sock".into()
+    } else {
+        // on Windows, use TCP localhost since Unix sockets are not available
+        "127.0.0.1:24803".into()
     }
 }
 
-/// run the IPC server on the given socket path
+/// run the IPC server on the given path/address
 pub async fn run_ipc_server(socket_path: &str, state: IpcState) -> std::io::Result<()> {
-    // remove stale socket
-    let _ = std::fs::remove_file(socket_path);
+    #[cfg(unix)]
+    {
+        run_unix_ipc_server(socket_path, state).await
+    }
+    #[cfg(not(unix))]
+    {
+        run_tcp_ipc_server(socket_path, state).await
+    }
+}
 
+#[cfg(unix)]
+async fn run_unix_ipc_server(socket_path: &str, state: IpcState) -> std::io::Result<()> {
+    use tokio::net::UnixListener;
+
+    let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
-    tracing::info!(path = socket_path, "IPC server listening");
+    tracing::info!(path = socket_path, "IPC server listening (unix socket)");
 
     loop {
         let (stream, _addr) = listener.accept().await?;
         let state = state.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, state).await {
+            let (reader, writer) = stream.into_split();
+            if let Err(e) = handle_client(reader, writer, state).await {
                 tracing::debug!(error = %e, "IPC client disconnected");
             }
         });
     }
 }
 
-async fn handle_client(stream: tokio::net::UnixStream, state: IpcState) -> anyhow::Result<()> {
-    let (reader, mut writer) = stream.into_split();
+#[cfg(not(unix))]
+async fn run_tcp_ipc_server(socket_path: &str, state: IpcState) -> std::io::Result<()> {
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind(socket_path).await?;
+    tracing::info!(addr = socket_path, "IPC server listening (tcp)");
+
+    loop {
+        let (stream, _addr) = listener.accept().await?;
+        let state = state.clone();
+        tokio::spawn(async move {
+            let (reader, writer) = stream.into_split();
+            if let Err(e) = handle_client(reader, writer, state).await {
+                tracing::debug!(error = %e, "IPC client disconnected");
+            }
+        });
+    }
+}
+
+async fn handle_client<R, W>(reader: R, mut writer: W, state: IpcState) -> anyhow::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
     let mut lines = BufReader::new(reader).lines();
 
     while let Some(line) = lines.next_line().await? {
@@ -151,7 +186,6 @@ async fn dispatch(req: &JsonRpcRequest, state: &IpcState) -> JsonRpcResponse {
             match locked {
                 Some(val) => {
                     let _ = state.cmd_tx.send(IpcCommand::SetFocusLock(val)).await;
-                    // update state immediately
                     state.daemon_state.write().await.focus_locked = val;
                     JsonRpcResponse::success(
                         req.id.clone(),
@@ -179,7 +213,6 @@ async fn dispatch(req: &JsonRpcRequest, state: &IpcState) -> JsonRpcResponse {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::UnixStream;
 
     fn test_state() -> (IpcState, mpsc::Receiver<IpcCommand>) {
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
@@ -199,22 +232,36 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     fn temp_socket() -> String {
         format!("/tmp/softkvm-test-{}.sock", std::process::id())
     }
 
-    async fn send_request(stream: &mut UnixStream, req: &str) -> String {
+    #[cfg(not(unix))]
+    fn temp_socket() -> String {
+        "127.0.0.1:0".into()
+    }
+
+    #[cfg(unix)]
+    async fn connect_ipc(path: &str) -> tokio::net::UnixStream {
+        tokio::net::UnixStream::connect(path).await.unwrap()
+    }
+
+    async fn send_request<S: AsyncReadExt + AsyncWriteExt + Unpin>(
+        stream: &mut S,
+        req: &str,
+    ) -> String {
         let mut msg = req.to_string();
         msg.push('\n');
         stream.write_all(msg.as_bytes()).await.unwrap();
         stream.flush().await.unwrap();
 
-        // read response line
         let mut buf = vec![0u8; 4096];
         let n = stream.read(&mut buf).await.unwrap();
         String::from_utf8_lossy(&buf[..n]).trim().to_string()
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_get_state() {
         let socket = temp_socket();
@@ -226,10 +273,9 @@ mod tests {
             run_ipc_server(&sock, s).await.unwrap();
         });
 
-        // give server time to bind
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let mut stream = UnixStream::connect(&socket).await.unwrap();
+        let mut stream = connect_ipc(&socket).await;
         let resp = send_request(
             &mut stream,
             r#"{"jsonrpc":"2.0","method":"get_state","id":1}"#,
@@ -245,6 +291,7 @@ mod tests {
         std::fs::remove_file(&socket).ok();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_switch_machine() {
         let socket = format!("/tmp/softkvm-test-switch-{}.sock", std::process::id());
@@ -257,7 +304,7 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let mut stream = UnixStream::connect(&socket).await.unwrap();
+        let mut stream = connect_ipc(&socket).await;
         let resp = send_request(
             &mut stream,
             r#"{"jsonrpc":"2.0","method":"switch_machine","params":{"machine":"MacBook"},"id":2}"#,
@@ -267,13 +314,13 @@ mod tests {
         let parsed: JsonRpcResponse = serde_json::from_str(&resp).unwrap();
         assert!(parsed.error.is_none());
 
-        // verify command was sent
         let cmd = cmd_rx.try_recv().unwrap();
         matches!(cmd, IpcCommand::SwitchMachine(ref name) if name == "MacBook");
 
         std::fs::remove_file(&socket).ok();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_set_focus_lock() {
         let socket = format!("/tmp/softkvm-test-lock-{}.sock", std::process::id());
@@ -286,7 +333,7 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let mut stream = UnixStream::connect(&socket).await.unwrap();
+        let mut stream = connect_ipc(&socket).await;
         let resp = send_request(
             &mut stream,
             r#"{"jsonrpc":"2.0","method":"set_focus_lock","params":{"locked":true},"id":3}"#,
@@ -296,16 +343,15 @@ mod tests {
         let parsed: JsonRpcResponse = serde_json::from_str(&resp).unwrap();
         assert!(parsed.error.is_none());
 
-        // verify state was updated
         assert!(state.daemon_state.read().await.focus_locked);
 
-        // verify command was sent
         let cmd = cmd_rx.try_recv().unwrap();
         matches!(cmd, IpcCommand::SetFocusLock(true));
 
         std::fs::remove_file(&socket).ok();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_invalid_method() {
         let socket = format!("/tmp/softkvm-test-invalid-{}.sock", std::process::id());
@@ -318,7 +364,7 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let mut stream = UnixStream::connect(&socket).await.unwrap();
+        let mut stream = connect_ipc(&socket).await;
         let resp = send_request(
             &mut stream,
             r#"{"jsonrpc":"2.0","method":"nonexistent","id":4}"#,
@@ -332,6 +378,7 @@ mod tests {
         std::fs::remove_file(&socket).ok();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_malformed_json() {
         let socket = format!("/tmp/softkvm-test-malformed-{}.sock", std::process::id());
@@ -344,7 +391,7 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let mut stream = UnixStream::connect(&socket).await.unwrap();
+        let mut stream = connect_ipc(&socket).await;
         let resp = send_request(&mut stream, "not valid json at all").await;
 
         let parsed: JsonRpcResponse = serde_json::from_str(&resp).unwrap();
@@ -354,6 +401,7 @@ mod tests {
         std::fs::remove_file(&socket).ok();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_multiple_clients() {
         let socket = format!("/tmp/softkvm-test-multi-{}.sock", std::process::id());
@@ -366,9 +414,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        // connect two clients simultaneously
-        let mut stream1 = UnixStream::connect(&socket).await.unwrap();
-        let mut stream2 = UnixStream::connect(&socket).await.unwrap();
+        let mut stream1 = connect_ipc(&socket).await;
+        let mut stream2 = connect_ipc(&socket).await;
 
         let resp1 = send_request(
             &mut stream1,
@@ -385,7 +432,6 @@ mod tests {
         let p2: JsonRpcResponse = serde_json::from_str(&resp2).unwrap();
         assert!(p1.error.is_none());
         assert!(p2.error.is_none());
-        // verify IDs are preserved
         assert_eq!(p1.id, Some(serde_json::json!(10)));
         assert_eq!(p2.id, Some(serde_json::json!(20)));
 

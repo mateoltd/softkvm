@@ -6,7 +6,7 @@ use softkvm_core::protocol::{
     PROTOCOL_VERSION,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream, UnixStream};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::Duration;
 
@@ -175,8 +175,10 @@ async fn test_full_switch_flow() {
 }
 
 /// IPC end-to-end: start IPC server, connect, get_state, switch_machine
+#[cfg(unix)]
 #[tokio::test]
 async fn test_ipc_end_to_end() {
+    use tokio::net::UnixStream;
     let socket = format!("/tmp/softkvm-integ-{}.sock", std::process::id());
     let _ = std::fs::remove_file(&socket);
 

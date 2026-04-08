@@ -230,7 +230,7 @@ mod win_hook {
                 }
             }
         }
-        CallNextHookEx(0isize, code, wparam, lparam)
+        CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam)
     }
 
     fn make_input(vk: u16, flags: u32) -> INPUT {
@@ -285,13 +285,13 @@ mod win_hook {
         let _ = tx.blocking_send(KeyEvent::Started);
 
         unsafe {
-            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), 0isize, 0);
-            if hook == 0isize {
+            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), std::ptr::null_mut(), 0);
+            if hook.is_null() {
                 anyhow::bail!("SetWindowsHookExW failed");
             }
 
             let mut msg: MSG = std::mem::zeroed();
-            while GetMessageW(&mut msg, 0isize, 0, 0) > 0 {
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
