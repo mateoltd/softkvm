@@ -470,8 +470,8 @@ async fn main() -> Result<()> {
 fn create_ddc_controller() -> Box<dyn DdcController> {
     #[cfg(feature = "real-ddc")]
     {
-        tracing::info!("using real DDC/CI controller (ddc-hi)");
-        Box::new(softkvm_core::ddc::real::RealDdcController::new())
+        tracing::info!("using real DDC/CI controller");
+        softkvm_core::ddc::create_controller()
     }
 
     #[cfg(not(feature = "real-ddc"))]

@@ -157,35 +157,6 @@ fn hostname() -> String {
         .unwrap_or_else(|_| "unknown-agent".into())
 }
 
-#[cfg(feature = "stub-ddc")]
 fn create_controller() -> Box<dyn DdcController> {
-    Box::new(softkvm_core::ddc::stub::StubDdcController::new())
-}
-
-#[cfg(all(not(feature = "stub-ddc"), feature = "real-ddc"))]
-fn create_controller() -> Box<dyn DdcController> {
-    Box::new(softkvm_core::ddc::real::RealDdcController::new())
-}
-
-#[cfg(all(not(feature = "stub-ddc"), not(feature = "real-ddc")))]
-fn create_controller() -> Box<dyn DdcController> {
-    struct NullController;
-    impl DdcController for NullController {
-        fn enumerate_monitors(
-            &self,
-        ) -> softkvm_core::error::Result<Vec<softkvm_core::protocol::MonitorInfo>> {
-            Ok(vec![])
-        }
-        fn get_input_source(&self, id: &str) -> softkvm_core::error::Result<u16> {
-            Err(softkvm_core::error::SoftKvmError::Ddc(format!(
-                "no DDC backend available for {id}"
-            )))
-        }
-        fn set_input_source(&self, id: &str, _value: u16) -> softkvm_core::error::Result<()> {
-            Err(softkvm_core::error::SoftKvmError::Ddc(format!(
-                "no DDC backend available for {id}"
-            )))
-        }
-    }
-    Box::new(NullController)
+    softkvm_core::ddc::create_controller()
 }

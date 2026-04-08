@@ -291,6 +291,387 @@ pub mod real {
     }
 }
 
+/// m1ddc-based DDC controller for Apple Silicon Macs where ddc-hi
+/// cannot read VCP features through USB-C/DP adapters.
+/// shells out to the m1ddc CLI (brew install m1ddc).
+#[cfg(target_os = "macos")]
+pub mod m1ddc_backend {
+    use super::*;
+    use std::collections::HashMap;
+    use std::process::Command;
+    use std::sync::Mutex;
+
+    pub struct M1DdcController {
+        uuid_map: Mutex<HashMap<String, String>>,
+    }
+
+    impl Default for M1DdcController {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl M1DdcController {
+        pub fn new() -> Self {
+            Self {
+                uuid_map: Mutex::new(HashMap::new()),
+            }
+        }
+
+        /// check if m1ddc is installed and usable
+        pub fn is_available() -> bool {
+            Command::new("m1ddc")
+                .arg("display")
+                .arg("list")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+
+        fn run(args: &[&str]) -> std::result::Result<String, String> {
+            let output = Command::new("m1ddc")
+                .args(args)
+                .output()
+                .map_err(|e| format!("failed to run m1ddc: {e}"))?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                Err(if stderr.is_empty() {
+                    format!("m1ddc exited with {}", output.status)
+                } else {
+                    stderr
+                })
+            }
+        }
+
+        /// parse "m1ddc display list" output
+        /// format: [N] DisplayName (UUID)
+        fn parse_display_list(output: &str) -> Vec<(String, String)> {
+            let mut displays = Vec::new();
+            for line in output.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix('[') {
+                    if let Some(bracket_end) = rest.find(']') {
+                        let after = rest[bracket_end + 1..].trim();
+                        if let (Some(paren_start), Some(paren_end)) =
+                            (after.rfind('('), after.rfind(')'))
+                        {
+                            let name = after[..paren_start].trim().to_string();
+                            let uuid = after[paren_start + 1..paren_end].to_string();
+                            displays.push((name, uuid));
+                        }
+                    }
+                }
+            }
+            displays
+        }
+
+        fn vcp_to_feature(code: u8) -> Result<&'static str> {
+            match code {
+                0x10 => Ok("luminance"),
+                0x12 => Ok("contrast"),
+                0x60 => Ok("input-alt"),
+                _ => Err(crate::error::SoftKvmError::Ddc(format!(
+                    "m1ddc does not support VCP 0x{code:02x}"
+                ))),
+            }
+        }
+
+        fn uuid_for(&self, monitor_id: &str) -> Result<String> {
+            self.uuid_map
+                .lock()
+                .unwrap()
+                .get(monitor_id)
+                .cloned()
+                .ok_or_else(|| crate::error::SoftKvmError::MonitorNotFound(monitor_id.into()))
+        }
+    }
+
+    impl DdcController for M1DdcController {
+        fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>> {
+            let output = Self::run(&["display", "list"])
+                .map_err(|e| crate::error::SoftKvmError::Ddc(e))?;
+
+            let displays = Self::parse_display_list(&output);
+            let mut monitors = Vec::new();
+            let mut uuid_map = self.uuid_map.lock().unwrap();
+            uuid_map.clear();
+
+            for (name, uuid) in displays {
+                let current_input = Self::run(&["display", &uuid, "get", "input-alt"])
+                    .ok()
+                    .and_then(|v| v.parse::<u16>().ok());
+
+                let id = format!("m1ddc:{uuid}");
+                uuid_map.insert(id.clone(), uuid);
+
+                let display_name = if name == "(null)" || name.is_empty() {
+                    "Unknown".to_string()
+                } else {
+                    name
+                };
+
+                monitors.push(MonitorInfo {
+                    id: id.clone(),
+                    name: display_name.clone(),
+                    manufacturer: "Unknown".into(),
+                    model: display_name,
+                    serial: "Unknown".into(),
+                    current_input_vcp: current_input,
+                    ddc_supported: current_input.is_some(),
+                });
+            }
+
+            Ok(monitors)
+        }
+
+        fn get_input_source(&self, monitor_id: &str) -> Result<u16> {
+            let uuid = self.uuid_for(monitor_id)?;
+            let output = Self::run(&["display", &uuid, "get", "input-alt"])
+                .map_err(|e| crate::error::SoftKvmError::Ddc(format!("m1ddc get input: {e}")))?;
+            output.parse::<u16>().map_err(|e| {
+                crate::error::SoftKvmError::Ddc(format!("m1ddc parse input value '{output}': {e}"))
+            })
+        }
+
+        fn set_input_source(&self, monitor_id: &str, value: u16) -> Result<()> {
+            let uuid = self.uuid_for(monitor_id)?;
+            let val = value.to_string();
+            Self::run(&["display", &uuid, "set", "input-alt", &val])
+                .map_err(|e| crate::error::SoftKvmError::Ddc(format!("m1ddc set input: {e}")))?;
+            Ok(())
+        }
+
+        fn get_vcp_feature(&self, monitor_id: &str, code: u8) -> Result<u16> {
+            let uuid = self.uuid_for(monitor_id)?;
+            let feature = Self::vcp_to_feature(code)?;
+            let output = Self::run(&["display", &uuid, "get", feature])
+                .map_err(|e| crate::error::SoftKvmError::Ddc(format!("m1ddc get {feature}: {e}")))?;
+            output.parse::<u16>().map_err(|e| {
+                crate::error::SoftKvmError::Ddc(format!(
+                    "m1ddc parse {feature} value '{output}': {e}"
+                ))
+            })
+        }
+
+        fn set_vcp_feature(&self, monitor_id: &str, code: u8, value: u16) -> Result<()> {
+            let uuid = self.uuid_for(monitor_id)?;
+            let feature = Self::vcp_to_feature(code)?;
+            let val = value.to_string();
+            Self::run(&["display", &uuid, "set", feature, &val])
+                .map_err(|e| crate::error::SoftKvmError::Ddc(format!("m1ddc set {feature}: {e}")))?;
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_parse_display_list() {
+            let output = r#"[1] LG ULTRAGEAR+ (F0DB7A7E-6804-4F3B-8687-200C7CBCE0C8)
+[2] LC27G5xT (48D766BF-A3F7-4D70-9574-6347F69C9DE1)
+[3] (null) (BB7A124B-B761-4DE2-B597-7E1A432EAAA2)"#;
+
+            let displays = M1DdcController::parse_display_list(output);
+            assert_eq!(displays.len(), 3);
+            assert_eq!(displays[0].0, "LG ULTRAGEAR+");
+            assert_eq!(
+                displays[0].1,
+                "F0DB7A7E-6804-4F3B-8687-200C7CBCE0C8"
+            );
+            assert_eq!(displays[1].0, "LC27G5xT");
+            assert_eq!(displays[2].0, "(null)");
+        }
+
+        #[test]
+        fn test_parse_empty_output() {
+            let displays = M1DdcController::parse_display_list("");
+            assert!(displays.is_empty());
+        }
+
+        #[test]
+        fn test_vcp_to_feature() {
+            assert_eq!(M1DdcController::vcp_to_feature(0x10).unwrap(), "luminance");
+            assert_eq!(M1DdcController::vcp_to_feature(0x12).unwrap(), "contrast");
+            assert_eq!(M1DdcController::vcp_to_feature(0x60).unwrap(), "input-alt");
+            assert!(M1DdcController::vcp_to_feature(0x99).is_err());
+        }
+    }
+}
+
+/// composite controller that merges ddc-hi and m1ddc results on macOS.
+/// monitors that ddc-hi detects with working DDC are used from ddc-hi.
+/// monitors where ddc-hi fails are tried with m1ddc as fallback.
+#[cfg(all(target_os = "macos", feature = "real-ddc"))]
+pub mod composite {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    enum Backend {
+        DdcHi,
+        M1Ddc,
+    }
+
+    pub struct CompositeDdcController {
+        ddc_hi: real::RealDdcController,
+        m1ddc: Option<m1ddc_backend::M1DdcController>,
+        backend_map: Mutex<HashMap<String, Backend>>,
+    }
+
+    impl CompositeDdcController {
+        pub fn new() -> Self {
+            let m1ddc = if m1ddc_backend::M1DdcController::is_available() {
+                tracing::info!("m1ddc detected, using as fallback DDC backend");
+                Some(m1ddc_backend::M1DdcController::new())
+            } else {
+                tracing::debug!("m1ddc not found, using ddc-hi only");
+                None
+            };
+
+            Self {
+                ddc_hi: real::RealDdcController::new(),
+                m1ddc,
+                backend_map: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    impl Default for CompositeDdcController {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl DdcController for CompositeDdcController {
+        fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>> {
+            let mut backend_map = self.backend_map.lock().unwrap();
+            backend_map.clear();
+
+            // get ddc-hi monitors
+            let ddc_hi_monitors = self.ddc_hi.enumerate_monitors().unwrap_or_default();
+            let mut all_monitors = Vec::new();
+
+            for mon in &ddc_hi_monitors {
+                backend_map.insert(mon.id.clone(), Backend::DdcHi);
+                all_monitors.push(mon.clone());
+            }
+
+            let ddc_hi_working = ddc_hi_monitors.iter().filter(|m| m.ddc_supported).count();
+
+            // try m1ddc for additional monitors or if ddc-hi found monitors without DDC
+            if let Some(ref m1ddc) = self.m1ddc {
+                let ddc_hi_broken = ddc_hi_monitors.len() - ddc_hi_working;
+                if ddc_hi_broken > 0 || ddc_hi_monitors.is_empty() {
+                    if let Ok(m1ddc_monitors) = m1ddc.enumerate_monitors() {
+                        for mon in m1ddc_monitors {
+                            if !mon.ddc_supported {
+                                continue;
+                            }
+                            // avoid duplicates: skip if ddc-hi already has a working
+                            // monitor with the same current input VCP
+                            let is_duplicate = mon.current_input_vcp.is_some()
+                                && all_monitors.iter().any(|existing| {
+                                    existing.ddc_supported
+                                        && existing.current_input_vcp == mon.current_input_vcp
+                                });
+                            if !is_duplicate {
+                                backend_map.insert(mon.id.clone(), Backend::M1Ddc);
+                                // replace a broken ddc-hi entry if same current_input_vcp
+                                let replaced = all_monitors.iter().position(|existing| {
+                                    !existing.ddc_supported
+                                        && mon.current_input_vcp.is_some()
+                                        && existing.current_input_vcp == mon.current_input_vcp
+                                });
+                                if let Some(idx) = replaced {
+                                    backend_map.remove(&all_monitors[idx].id);
+                                    all_monitors[idx] = mon;
+                                } else {
+                                    all_monitors.push(mon);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(all_monitors)
+        }
+
+        fn get_input_source(&self, monitor_id: &str) -> Result<u16> {
+            let map = self.backend_map.lock().unwrap();
+            match map.get(monitor_id) {
+                Some(Backend::M1Ddc) => self
+                    .m1ddc
+                    .as_ref()
+                    .ok_or_else(|| crate::error::SoftKvmError::Ddc("m1ddc unavailable".into()))?
+                    .get_input_source(monitor_id),
+                _ => self.ddc_hi.get_input_source(monitor_id),
+            }
+        }
+
+        fn set_input_source(&self, monitor_id: &str, value: u16) -> Result<()> {
+            let map = self.backend_map.lock().unwrap();
+            match map.get(monitor_id) {
+                Some(Backend::M1Ddc) => self
+                    .m1ddc
+                    .as_ref()
+                    .ok_or_else(|| crate::error::SoftKvmError::Ddc("m1ddc unavailable".into()))?
+                    .set_input_source(monitor_id, value),
+                _ => self.ddc_hi.set_input_source(monitor_id, value),
+            }
+        }
+
+        fn get_vcp_feature(&self, monitor_id: &str, code: u8) -> Result<u16> {
+            let map = self.backend_map.lock().unwrap();
+            match map.get(monitor_id) {
+                Some(Backend::M1Ddc) => self
+                    .m1ddc
+                    .as_ref()
+                    .ok_or_else(|| crate::error::SoftKvmError::Ddc("m1ddc unavailable".into()))?
+                    .get_vcp_feature(monitor_id, code),
+                _ => self.ddc_hi.get_vcp_feature(monitor_id, code),
+            }
+        }
+
+        fn set_vcp_feature(&self, monitor_id: &str, code: u8, value: u16) -> Result<()> {
+            let map = self.backend_map.lock().unwrap();
+            match map.get(monitor_id) {
+                Some(Backend::M1Ddc) => self
+                    .m1ddc
+                    .as_ref()
+                    .ok_or_else(|| crate::error::SoftKvmError::Ddc("m1ddc unavailable".into()))?
+                    .set_vcp_feature(monitor_id, code, value),
+                _ => self.ddc_hi.set_vcp_feature(monitor_id, code, value),
+            }
+        }
+    }
+}
+
+/// create the best available DDC controller for the current platform.
+/// on macOS with real-ddc: composite (ddc-hi + m1ddc fallback).
+/// on other platforms with real-ddc: ddc-hi only.
+/// with stub-ddc: stub controller.
+#[cfg(feature = "real-ddc")]
+pub fn create_controller() -> Box<dyn DdcController> {
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(composite::CompositeDdcController::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Box::new(real::RealDdcController::new())
+    }
+}
+
+#[cfg(all(not(feature = "real-ddc"), feature = "stub-ddc"))]
+pub fn create_controller() -> Box<dyn DdcController> {
+    Box::new(stub::StubDdcController::new())
+}
+
 /// stub DDC controller for testing and platforms where ddc-hi isn't available
 #[cfg(any(test, feature = "stub-ddc"))]
 pub mod stub {

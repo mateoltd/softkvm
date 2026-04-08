@@ -73,18 +73,6 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "real-ddc")]
 fn create_controller() -> Box<dyn DdcController> {
-    Box::new(softkvm_core::ddc::real::RealDdcController::new())
-}
-
-#[cfg(all(not(feature = "real-ddc"), feature = "stub-ddc"))]
-fn create_controller() -> Box<dyn DdcController> {
-    Box::new(softkvm_core::ddc::stub::StubDdcController::new())
-}
-
-#[cfg(all(not(feature = "real-ddc"), not(feature = "stub-ddc")))]
-fn create_controller() -> Box<dyn DdcController> {
-    compile_error!("enable either the real-ddc or stub-ddc feature");
-    Box::new(NullController)
+    softkvm_core::ddc::create_controller()
 }
