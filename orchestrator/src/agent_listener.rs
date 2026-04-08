@@ -50,7 +50,9 @@ impl AgentManager {
         }
     }
 
-    /// send a SwitchMonitor command to the agent controlling the given monitor
+    /// send a SwitchMonitor command to the agent controlling the given monitor.
+    /// called when a remote monitor needs switching during a screen transition
+    #[allow(dead_code)]
     pub async fn send_switch(
         &self,
         agent_name: &str,
@@ -89,6 +91,7 @@ impl AgentManager {
     }
 
     /// get monitors reported by a specific agent
+    #[allow(dead_code)]
     pub async fn agent_monitors(&self, agent_name: &str) -> Vec<MonitorInfo> {
         let agents = self.agents.read().await;
         match agents.get(agent_name) {

@@ -150,6 +150,7 @@ impl DeskflowProcess {
     }
 
     /// wait for the process to exit and return the exit status
+    #[allow(dead_code)]
     pub async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
         self.child.wait().await
     }
