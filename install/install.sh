@@ -148,12 +148,30 @@ try_source_install() {
     return 1
   fi
 
-  # compile the setup TUI while we still have the source tree
-  if command -v bun &>/dev/null; then
-    local setup_dir="${build_dir}/setup"
-    if [ -f "${setup_dir}/package.json" ]; then
-      info "compiling setup wizard"
-      if (cd "${setup_dir}" && bun install --silent 2>/dev/null && bun build --compile --outfile="${INSTALL_DIR}/softkvm-setup" src/index.ts 2>/dev/null); then
+  # bundle and install the setup TUI while we still have the source tree
+  local setup_dir="${build_dir}/setup"
+  if [ -f "${setup_dir}/package.json" ]; then
+    local bundler=""
+    if command -v bun &>/dev/null; then
+      bundler="bun"
+    elif command -v npx &>/dev/null; then
+      bundler="npx"
+    fi
+    if [ -n "${bundler}" ]; then
+      info "bundling setup wizard"
+      local setup_dest="${INSTALL_DIR}/../setup"
+      mkdir -p "${setup_dest}"
+      if [ "${bundler}" = "bun" ]; then
+        (cd "${setup_dir}" && bun install --silent 2>/dev/null && bun build --outfile="${setup_dest}/setup.mjs" --target=node src/index.ts 2>/dev/null) || true
+      else
+        (cd "${setup_dir}" && npm install --silent 2>/dev/null && npx esbuild --bundle --platform=node --format=esm --outfile="${setup_dest}/setup.mjs" src/index.ts 2>/dev/null) || true
+      fi
+      if [ -f "${setup_dest}/setup.mjs" ]; then
+        cat > "${INSTALL_DIR}/softkvm-setup" << 'WRAPPER'
+#!/usr/bin/env bash
+SETUP_DIR="$(dirname "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")")/setup"
+exec node "${SETUP_DIR}/setup.mjs" "$@"
+WRAPPER
         chmod +x "${INSTALL_DIR}/softkvm-setup"
       else
         warn "setup wizard build failed (will use manual setup)"

@@ -2,10 +2,22 @@ import * as p from "@clack/prompts";
 import { platform, hostname } from "os";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
-import { $ } from "bun";
+import { execSync, spawn } from "child_process";
 import { discoverServers, type ServerInfo } from "./discover";
 import { scanMonitors, KNOWN_INPUTS, detectedInputConfigValue, detectedInputLabel, monitorLabel, monitorHint, type MonitorInfo } from "./monitor-scan";
 import { generateConfig, type SetupAnswers, type MonitorSetup } from "./config-gen";
+
+// shell helper replacing Bun's $ tagged template (Node-compatible)
+function exec(cmd: string): string {
+  return execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+}
+function execQuiet(cmd: string): void {
+  execSync(cmd, { stdio: "ignore" });
+}
+function spawnDetached(bin: string, args: string[]): void {
+  const child = spawn(bin, args, { detached: true, stdio: "ignore" });
+  child.unref();
+}
 
 function detectOs(): "windows" | "macos" | "linux" {
   const p = platform();
@@ -28,7 +40,7 @@ function configDir(): string {
 // identify a monitor by briefly blanking its screen
 async function identifyMonitor(monitorId: string): Promise<boolean> {
   try {
-    await $`softkvm identify ${monitorId}`.quiet();
+    execQuiet(`softkvm identify ${monitorId}`);
     return true;
   } catch {
     return false;
@@ -397,8 +409,8 @@ async function findBinary(name: string): Promise<string | null> {
   // fall back to PATH lookup
   try {
     const cmd = os === "windows" ? `where ${fullName}` : `which ${fullName}`;
-    const result = await $`sh -c ${cmd}`.text();
-    const path = result.trim().split("\n")[0];
+    const result = exec(cmd);
+    const path = result.split("\n")[0];
     if (path && existsSync(path)) return path;
   } catch {
     // not in PATH
@@ -433,7 +445,7 @@ async function registerLaunchAgent(name: string, binPath: string, configPath: st
 
   // unload existing service if present
   if (existsSync(plistPath)) {
-    try { await $`launchctl unload ${plistPath}`.quiet(); } catch {}
+    try { execQuiet(`launchctl unload ${plistPath}`); } catch {}
   }
 
   if (!existsSync(plistDir)) {
@@ -464,7 +476,7 @@ async function registerLaunchAgent(name: string, binPath: string, configPath: st
 </plist>`;
 
   writeFileSync(plistPath, plist);
-  await $`launchctl load ${plistPath}`.quiet();
+  execQuiet(`launchctl load ${plistPath}`);
   return true;
 }
 
@@ -476,7 +488,7 @@ async function registerSystemdUser(name: string, binPath: string, configPath: st
   const unitPath = join(unitDir, `${name}.service`);
 
   // stop existing service if running
-  try { await $`systemctl --user stop ${name}`.quiet(); } catch {}
+  try { execQuiet(`systemctl --user stop ${name}`); } catch {}
 
   if (!existsSync(unitDir)) {
     mkdirSync(unitDir, { recursive: true });
@@ -497,15 +509,15 @@ WantedBy=default.target
 `;
 
   writeFileSync(unitPath, unit);
-  await $`systemctl --user daemon-reload`.quiet();
-  await $`systemctl --user enable ${name}`.quiet();
+  execQuiet("systemctl --user daemon-reload");
+  execQuiet(`systemctl --user enable ${name}`);
   return true;
 }
 
 async function registerWindowsTask(name: string, binPath: string, configPath: string): Promise<boolean> {
   // use HKCU Run key (no admin required, runs at user logon)
-  const cmd = `"${binPath}" --config "${configPath}"`;
-  await $`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d ${cmd} /f`.quiet();
+  const val = `"${binPath}" --config "${configPath}"`;
+  execQuiet(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d ${val} /f`);
   return true;
 }
 
@@ -519,26 +531,26 @@ async function startDaemon(binPath: string, configPath: string): Promise<boolean
       const name = binPath.includes("orchestrator") ? "softkvm-orchestrator" : "softkvm-agent";
       const label = `dev.softkvm.${name}`;
       try {
-        const result = await $`launchctl list ${label}`.text();
+        const result = exec(`launchctl list ${label}`);
         return result.includes(label);
       } catch {
         // launchctl list fails if not loaded, try direct spawn
-        Bun.spawn([binPath, "--config", configPath], { stdout: "ignore", stderr: "ignore" });
+        spawnDetached(binPath, ["--config", configPath]);
         return true;
       }
     } else if (os === "linux") {
       const name = binPath.includes("orchestrator") ? "softkvm-orchestrator" : "softkvm-agent";
-      await $`systemctl --user start ${name}`.quiet();
+      execQuiet(`systemctl --user start ${name}`);
       return true;
     } else {
       // windows: spawn detached
-      Bun.spawn([binPath, "--config", configPath], { stdout: "ignore", stderr: "ignore" });
+      spawnDetached(binPath, ["--config", configPath]);
       return true;
     }
   } catch {
     // fallback: spawn directly
     try {
-      Bun.spawn([binPath, "--config", configPath], { stdout: "ignore", stderr: "ignore" });
+      spawnDetached(binPath, ["--config", configPath]);
       return true;
     } catch {
       return false;

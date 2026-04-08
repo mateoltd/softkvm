@@ -1,4 +1,4 @@
-import { $ } from "bun";
+import { execSync } from "child_process";
 
 export interface MonitorInfo {
   id: string;
@@ -14,8 +14,8 @@ export interface MonitorInfo {
 // scan for monitors by shelling out to softkvm scan --json
 export async function scanMonitors(): Promise<MonitorInfo[]> {
   try {
-    const result = await $`softkvm scan --json`.text();
-    return JSON.parse(result);
+    const result = execSync("softkvm scan --json", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    return JSON.parse(result.trim());
   } catch {
     // softkvm binary not available yet or no monitors found
     return [];
