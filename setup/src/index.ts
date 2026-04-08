@@ -3,7 +3,7 @@ import { platform, hostname } from "os";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { discoverServers, type ServerInfo } from "./discover";
-import { scanMonitors } from "./monitor-scan";
+import { scanMonitors, KNOWN_INPUTS, monitorLabel, monitorHint } from "./monitor-scan";
 import { generateConfig, type SetupAnswers, type MonitorSetup } from "./config-gen";
 
 function detectOs(): "windows" | "macos" | "linux" {
@@ -22,6 +22,17 @@ function configDir(): string {
     return join(process.env.LOCALAPPDATA ?? join(process.env.HOME ?? "~", "AppData", "Local"), "softkvm");
   }
   return join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "~", ".config"), "softkvm");
+}
+
+// build input source options for a monitor, highlighting its current input
+function inputOptions(currentInput: string | null) {
+  return KNOWN_INPUTS.map((inp) => ({
+    value: inp.value,
+    label: inp.label,
+    hint: inp.vcp + (currentInput === inp.label.replace(" ", "") || currentInput === inp.value
+      ? " (current)"
+      : ""),
+  }));
 }
 
 async function main() {
@@ -138,30 +149,48 @@ async function main() {
   const monitors = await scanMonitors();
   spinner.stop(
     monitors.length > 0
-      ? `found ${monitors.length} monitor(s)`
+      ? `found ${monitors.length} monitor(s) with DDC/CI support`
       : "no DDC/CI monitors detected (will configure manually later)"
   );
 
   const monitorSetups: MonitorSetup[] = [];
 
   if (monitors.length > 0) {
-    for (const mon of monitors) {
-      p.log.info(`${mon.name} (${mon.id})`);
+    // let user choose which monitors to use
+    const selected = await p.multiselect({
+      message: "which monitors should softkvm control?",
+      options: monitors.map((mon) => ({
+        value: mon.id,
+        label: monitorLabel(mon),
+        hint: monitorHint(mon),
+      })),
+      required: false,
+    });
 
-      const localInput = await p.text({
-        message: `which input on "${mon.name}" corresponds to this machine (${machineName})?`,
-        placeholder: "DisplayPort1",
-        validate: (v) => (v.length === 0 ? "input cannot be empty" : undefined),
+    if (p.isCancel(selected)) {
+      p.cancel("setup cancelled");
+      process.exit(0);
+    }
+
+    const selectedIds = selected as string[];
+    const selectedMonitors = monitors.filter((m) => selectedIds.includes(m.id));
+
+    for (const mon of selectedMonitors) {
+      const label = monitorLabel(mon);
+      p.log.info(`configuring ${label}`);
+
+      const localInput = await p.select({
+        message: `input on "${label}" connected to this machine (${machineName})?`,
+        options: inputOptions(mon.current_input),
       });
       if (p.isCancel(localInput)) {
         p.cancel("setup cancelled");
         process.exit(0);
       }
 
-      const remoteInput = await p.text({
-        message: `which input corresponds to "${serverName}"?`,
-        placeholder: "HDMI1",
-        validate: (v) => (v.length === 0 ? "input cannot be empty" : undefined),
+      const remoteInput = await p.select({
+        message: `input on "${label}" connected to "${serverName}"?`,
+        options: inputOptions(null),
       });
       if (p.isCancel(remoteInput)) {
         p.cancel("setup cancelled");
@@ -169,10 +198,10 @@ async function main() {
       }
 
       monitorSetups.push({
-        name: mon.name,
+        name: label,
         monitorId: mon.id,
-        localInput,
-        remoteInput,
+        localInput: localInput as string,
+        remoteInput: remoteInput as string,
         remoteMachineName: serverName!,
       });
     }
