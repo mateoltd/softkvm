@@ -571,27 +571,42 @@ pub mod composite {
                             if !mon.ddc_supported {
                                 continue;
                             }
-                            // avoid duplicates: skip if ddc-hi already has a working
-                            // monitor with the same current input VCP
+                            // skip if ddc-hi already has a working monitor with
+                            // the same current input VCP (true duplicate)
                             let is_duplicate = mon.current_input_vcp.is_some()
                                 && all_monitors.iter().any(|existing| {
                                     existing.ddc_supported
                                         && existing.current_input_vcp == mon.current_input_vcp
                                 });
-                            if !is_duplicate {
-                                backend_map.insert(mon.id.clone(), Backend::M1Ddc);
-                                // replace a broken ddc-hi entry if same current_input_vcp
-                                let replaced = all_monitors.iter().position(|existing| {
-                                    !existing.ddc_supported
-                                        && mon.current_input_vcp.is_some()
-                                        && existing.current_input_vcp == mon.current_input_vcp
-                                });
-                                if let Some(idx) = replaced {
-                                    backend_map.remove(&all_monitors[idx].id);
-                                    all_monitors[idx] = mon;
-                                } else {
-                                    all_monitors.push(mon);
+                            if is_duplicate {
+                                continue;
+                            }
+
+                            backend_map.insert(mon.id.clone(), Backend::M1Ddc);
+
+                            // try to replace a broken ddc-hi entry:
+                            // 1) match by current_input_vcp if both have values
+                            // 2) if ddc-hi entry has no VCP at all (!ddc_supported),
+                            //    replace it since it's likely the same physical display
+                            let replaced = all_monitors.iter().position(|existing| {
+                                if existing.ddc_supported {
+                                    return false;
                                 }
+                                // both have VCP values: must match
+                                if existing.current_input_vcp.is_some()
+                                    && mon.current_input_vcp.is_some()
+                                {
+                                    return existing.current_input_vcp == mon.current_input_vcp;
+                                }
+                                // ddc-hi couldn't read VCP at all: assume same display
+                                existing.current_input_vcp.is_none()
+                            });
+
+                            if let Some(idx) = replaced {
+                                backend_map.remove(&all_monitors[idx].id);
+                                all_monitors[idx] = mon;
+                            } else {
+                                all_monitors.push(mon);
                             }
                         }
                     }
