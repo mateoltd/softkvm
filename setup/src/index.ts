@@ -1,6 +1,27 @@
+import { openSync } from "fs";
+import { ReadStream } from "tty";
+
+// compiled bun binaries on macOS don't always wire up stdin event
+// monitoring correctly (oven-sh/bun#18239, #10080, #7033).  reopen
+// /dev/tty as a fresh tty.ReadStream so the event loop picks it up.
+if (process.platform !== "win32") {
+  try {
+    const fd = openSync("/dev/tty", "r");
+    const tty = new ReadStream(fd);
+    tty.isRaw = process.stdin.isRaw ?? false;
+    Object.defineProperty(process, "stdin", {
+      value: tty,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    // /dev/tty unavailable (non-interactive environment)
+  }
+}
+
 import * as p from "@clack/prompts";
 import { platform, hostname } from "os";
-import { writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
+import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { $ } from "bun";
 import { discoverServers, type ServerInfo } from "./discover";

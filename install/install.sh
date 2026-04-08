@@ -263,12 +263,9 @@ run_post_install() {
   fi
 
   # run interactive setup — stdin may be a pipe (curl | bash), so
-  # reattach the terminal for interactive prompts.  only redirect stdin;
-  # redirecting stdout/stderr to /dev/tty breaks Bun's kqueue-backed
-  # TTY WriteStream (EINVAL on the re-opened fd).
+  # reattach the terminal for interactive prompts
   if [ -f "${INSTALL_DIR}/softkvm-setup" ]; then
     if [ -e /dev/tty ]; then
-      stty sane < /dev/tty 2>/dev/null || true
       "${INSTALL_DIR}/softkvm-setup" </dev/tty || {
         warn "setup wizard exited unexpectedly"
         show_manual_setup
