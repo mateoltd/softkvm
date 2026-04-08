@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import { platform, hostname } from "os";
-import { writeFileSync, mkdirSync, existsSync } from "fs";
+import { writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { $ } from "bun";
 import { discoverServers, type ServerInfo } from "./discover";
@@ -334,23 +334,213 @@ async function main() {
 
   p.log.success(`configuration written to ${configPath}`);
 
-  // show next steps
-  const steps = [];
-  if (role === "orchestrator") {
-    steps.push("start the server: softkvm-orchestrator --config " + configPath);
-    if (!serverName) {
-      steps.push("when your other machine is ready, run softkvm-agent on it");
-      steps.push("the agent will connect and identify itself automatically");
-    }
-  } else {
-    steps.push("start the agent: softkvm-agent --config " + configPath);
-  }
-  steps.push("");
-  steps.push("run `softkvm status` to check health");
-  steps.push("run `softkvm scan` to list detected monitors");
+  // register as start-on-boot service and start the daemon
+  const daemonRole = role as string;
+  const daemonBin = daemonRole === "orchestrator" ? "softkvm-orchestrator" : "softkvm-agent";
+  const binPath = await findBinary(daemonBin);
 
-  p.note(steps.join("\n"), "next steps");
+  if (binPath) {
+    spinner.start("registering start-on-boot service");
+    const serviceOk = await registerService(daemonRole, binPath, configPath);
+    spinner.stop(
+      serviceOk
+        ? "registered as start-on-boot service"
+        : "could not register start-on-boot (can be done manually later)"
+    );
+
+    spinner.start(`starting ${daemonBin}`);
+    const started = await startDaemon(binPath, configPath);
+    spinner.stop(
+      started
+        ? `${daemonBin} is running`
+        : `could not start ${daemonBin} (start it manually with: ${daemonBin} --config ${configPath})`
+    );
+  } else {
+    p.log.warn(`${daemonBin} not found in PATH, skipping auto-start`);
+    p.log.info(`start it manually: ${daemonBin} --config ${configPath}`);
+  }
+
+  // show next steps
+  const notes = [];
+  if (daemonRole === "orchestrator" && !serverName) {
+    notes.push("run the installer on your other machine to set it up as a client");
+    notes.push("it will detect this server automatically");
+  }
+  notes.push("run `softkvm status` to check health");
+  notes.push("run `softkvm scan` to list detected monitors");
+  notes.push("run `softkvm setup` to reconfigure");
+
+  p.note(notes.join("\n"), "next steps");
   p.outro("setup complete");
+}
+
+// find a binary in PATH or known install directories
+async function findBinary(name: string): Promise<string | null> {
+  const os = detectOs();
+  const ext = os === "windows" ? ".exe" : "";
+  const fullName = name + ext;
+
+  // check known install directories first
+  const knownDirs = os === "windows"
+    ? [join(process.env.LOCALAPPDATA ?? "", "softkvm", "bin")]
+    : [join(process.env.HOME ?? "~", ".softkvm", "bin")];
+
+  for (const dir of knownDirs) {
+    const candidate = join(dir, fullName);
+    if (existsSync(candidate)) return candidate;
+  }
+
+  // fall back to PATH lookup
+  try {
+    const cmd = os === "windows" ? `where ${fullName}` : `which ${fullName}`;
+    const result = await $`sh -c ${cmd}`.text();
+    const path = result.trim().split("\n")[0];
+    if (path && existsSync(path)) return path;
+  } catch {
+    // not in PATH
+  }
+
+  return null;
+}
+
+// register the daemon as a start-on-boot service
+async function registerService(role: string, binPath: string, configPath: string): Promise<boolean> {
+  const os = detectOs();
+  const serviceName = role === "orchestrator" ? "softkvm-orchestrator" : "softkvm-agent";
+
+  try {
+    if (os === "macos") {
+      return await registerLaunchAgent(serviceName, binPath, configPath);
+    } else if (os === "linux") {
+      return await registerSystemdUser(serviceName, binPath, configPath);
+    } else {
+      return await registerWindowsTask(serviceName, binPath, configPath);
+    }
+  } catch {
+    return false;
+  }
+}
+
+async function registerLaunchAgent(name: string, binPath: string, configPath: string): Promise<boolean> {
+  const label = `dev.softkvm.${name}`;
+  const plistDir = join(process.env.HOME ?? "~", "Library", "LaunchAgents");
+  const plistPath = join(plistDir, `${label}.plist`);
+  const logPath = join(process.env.HOME ?? "~", "Library", "Logs", "softkvm.log");
+
+  // unload existing service if present
+  if (existsSync(plistPath)) {
+    try { await $`launchctl unload ${plistPath}`.quiet(); } catch {}
+  }
+
+  if (!existsSync(plistDir)) {
+    mkdirSync(plistDir, { recursive: true });
+  }
+
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${binPath}</string>
+        <string>--config</string>
+        <string>${configPath}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${logPath}</string>
+    <key>StandardErrorPath</key>
+    <string>${logPath}</string>
+</dict>
+</plist>`;
+
+  writeFileSync(plistPath, plist);
+  await $`launchctl load ${plistPath}`.quiet();
+  return true;
+}
+
+async function registerSystemdUser(name: string, binPath: string, configPath: string): Promise<boolean> {
+  const unitDir = join(
+    process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "~", ".config"),
+    "systemd", "user"
+  );
+  const unitPath = join(unitDir, `${name}.service`);
+
+  // stop existing service if running
+  try { await $`systemctl --user stop ${name}`.quiet(); } catch {}
+
+  if (!existsSync(unitDir)) {
+    mkdirSync(unitDir, { recursive: true });
+  }
+
+  const unit = `[Unit]
+Description=softkvm ${name.replace("softkvm-", "")}
+After=network.target graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=${binPath} --config ${configPath}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`;
+
+  writeFileSync(unitPath, unit);
+  await $`systemctl --user daemon-reload`.quiet();
+  await $`systemctl --user enable ${name}`.quiet();
+  return true;
+}
+
+async function registerWindowsTask(name: string, binPath: string, configPath: string): Promise<boolean> {
+  // remove existing task if present
+  try { await $`schtasks /delete /tn ${name} /f`.quiet(); } catch {}
+
+  await $`schtasks /create /tn ${name} /tr "${binPath} --config ${configPath}" /sc onlogon /rl highest /f`.quiet();
+  return true;
+}
+
+// start the daemon as a detached background process
+async function startDaemon(binPath: string, configPath: string): Promise<boolean> {
+  const os = detectOs();
+
+  try {
+    if (os === "macos") {
+      // launchctl already started it via load, verify it's running
+      const name = binPath.includes("orchestrator") ? "softkvm-orchestrator" : "softkvm-agent";
+      const label = `dev.softkvm.${name}`;
+      try {
+        const result = await $`launchctl list ${label}`.text();
+        return result.includes(label);
+      } catch {
+        // launchctl list fails if not loaded, try direct spawn
+        Bun.spawn([binPath, "--config", configPath], { stdout: "ignore", stderr: "ignore" });
+        return true;
+      }
+    } else if (os === "linux") {
+      const name = binPath.includes("orchestrator") ? "softkvm-orchestrator" : "softkvm-agent";
+      await $`systemctl --user start ${name}`.quiet();
+      return true;
+    } else {
+      // windows: spawn detached
+      Bun.spawn([binPath, "--config", configPath], { stdout: "ignore", stderr: "ignore" });
+      return true;
+    }
+  } catch {
+    // fallback: spawn directly
+    try {
+      Bun.spawn([binPath, "--config", configPath], { stdout: "ignore", stderr: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 main().catch((e) => {

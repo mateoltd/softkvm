@@ -27,8 +27,10 @@ The installer will:
 4. Add the CLI to your PATH
 5. Scan connected monitors for DDC/CI support
 6. Launch the interactive setup wizard
+7. Register as a start-on-boot service (launchd / systemd / Task Scheduler)
+8. Start the daemon immediately
 
-After install, open a new terminal and the `softkvm` command is available globally.
+After install, open a new terminal and the `softkvm` command is available globally. The daemon is already running.
 
 ## What the setup wizard does
 
@@ -56,6 +58,8 @@ The installer runs the setup wizard after installing. Run it on **both machines*
 ℹ IC274K-4I: this machine is on 0x07 (non-standard)
 
 ▸ configuration written to %LOCALAPPDATA%\softkvm\softkvm.toml
+▸ registered as start-on-boot service
+▸ softkvm-orchestrator is running
 ```
 
 **On the second machine (client):**
@@ -79,27 +83,15 @@ The installer runs the setup wizard after installing. Run it on **both machines*
 │ ● Left
 
 ▸ configuration written to ~/.config/softkvm/softkvm.toml
+▸ registered as start-on-boot service
+▸ softkvm-agent is running
 ```
 
 When the client connects to the server, it sends its detected monitor inputs automatically. The server merges them into the full input mapping. No manual config editing needed for either machine, even with non-standard VCP values.
 
+The setup wizard also registers the daemon as a start-on-boot service and launches it immediately. No manual daemon management needed.
+
 Run `softkvm setup` anytime to reconfigure.
-
-## Start the daemons
-
-On the **primary machine** (orchestrator):
-
-```bash
-softkvm-orchestrator
-```
-
-On each **secondary machine** (agent):
-
-```bash
-softkvm-agent
-```
-
-That's it. Move your mouse across screen edges and everything switches automatically.
 
 ## How it works
 
@@ -134,7 +126,7 @@ softkvm setup              re-run the interactive setup wizard
 softkvm update             check for updates
 ```
 
-Daemons:
+Daemons (started automatically by setup, rarely needed manually):
 
 ```
 softkvm-orchestrator                     start the server daemon
@@ -145,6 +137,11 @@ softkvm-agent                            start the client daemon
 softkvm-agent --server 192.168.1.100     override server address
 softkvm-agent --config path.toml         use a specific config
 ```
+
+The daemon is registered as a start-on-boot service during setup:
+- **macOS**: `~/Library/LaunchAgents/dev.softkvm.*.plist`
+- **Linux**: `~/.config/systemd/user/softkvm-*.service`
+- **Windows**: Task Scheduler task `softkvm-orchestrator` or `softkvm-agent`
 
 ## Default hotkeys
 
