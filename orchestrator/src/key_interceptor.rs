@@ -1,12 +1,14 @@
 use softkvm_core::keymap::{
-    build_translation_rules, find_translation, KeyCombo, Modifier, OsType, ShortcutTranslation,
+    build_translation_rules, find_translation, KeyCombo, OsType, ShortcutTranslation,
     TranslationRule,
 };
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-/// events emitted by the key interceptor
+/// events emitted by the key interceptor.
+/// variants are constructed by platform-specific hooks (windows/macos cfg-gated modules)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum KeyEvent {
     /// a combo was intercepted and translated
     Translated {
@@ -56,7 +58,9 @@ impl InterceptorState {
         }
     }
 
-    /// check if a pressed combo should be translated
+    /// check if a pressed combo should be translated.
+    /// called by platform hook callbacks (cfg-gated)
+    #[allow(dead_code)]
     pub fn translate(&self, combo: &KeyCombo) -> Option<&TranslationRule> {
         if !self.enabled || self.remote_os.is_none() {
             return None;
@@ -152,6 +156,7 @@ impl KeyInterceptor {
     }
 
     /// get the current state for inspection
+    #[allow(dead_code)]
     pub fn state(&self) -> Arc<Mutex<InterceptorState>> {
         Arc::clone(&self.state)
     }
@@ -386,7 +391,7 @@ mod mac_hook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use softkvm_core::keymap::default_translations;
+    use softkvm_core::keymap::{default_translations, Modifier};
 
     #[test]
     fn test_interceptor_state_no_remote() {

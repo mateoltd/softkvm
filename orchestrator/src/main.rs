@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use clap::Parser;
 use softkvm_core::config::Config;
 use softkvm_core::ddc::DdcController;
-use tokio::sync::mpsc;
+use softkvm_core::protocol::{DaemonState, MachineState};
+use tokio::sync::{mpsc, RwLock};
+use tokio::time::Duration;
 
 mod agent_listener;
 mod deskflow;
@@ -11,6 +15,9 @@ mod ipc_server;
 mod key_interceptor;
 mod log_parser;
 mod switch_engine;
+
+use agent_listener::{AgentEvent, AgentManager};
+use ipc_server::{IpcCommand, IpcState};
 
 #[derive(Parser)]
 #[command(name = "softkvm-orchestrator", about = "softkvm orchestrator daemon")]
@@ -49,24 +56,8 @@ async fn main() -> Result<()> {
         "configuration loaded"
     );
 
-    // start discovery responder
-    let disc_name = server_name.clone();
-    let disc_port = config.network.listen_port;
-    tokio::spawn(async move {
-        if let Err(e) = discovery::run_discovery_responder(
-            disc_name,
-            env!("CARGO_PKG_VERSION").to_string(),
-            disc_port,
-        )
-        .await
-        {
-            tracing::warn!(error = %e, "discovery responder failed");
-        }
-    });
-
-    // set up switch engine with stub DDC controller
-    // on a real system this would be the ddc-hi backed controller
-    let ddc: Box<dyn DdcController> = Box::new(StubController);
+    // select DDC controller: real ddc-hi on supported platforms, logging stub otherwise
+    let ddc: Box<dyn DdcController> = create_ddc_controller();
     let engine = switch_engine::SwitchEngine::new(config.clone());
 
     // build OS lookup for machines (name -> OsType)
@@ -82,26 +73,117 @@ async fn main() -> Result<()> {
         .copied()
         .unwrap_or(softkvm_core::keymap::OsType::Linux);
 
-    // initialize key interceptor for combo-aware translation
-    let interceptor = key_interceptor::KeyInterceptor::new(
+    // -- shared daemon state for IPC clients --
+    let daemon_state = Arc::new(RwLock::new(DaemonState {
+        machines: config
+            .machines
+            .iter()
+            .map(|m| MachineState {
+                name: m.name.clone(),
+                os: format!("{}", m.os),
+                role: format!("{:?}", m.role).to_lowercase(),
+                online: m.name == server_name, // only local machine is online at startup
+                active: m.name == server_name,
+            })
+            .collect(),
+        monitors: match ddc.enumerate_monitors() {
+            Ok(monitors) => monitors,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to enumerate monitors at startup");
+                vec![]
+            }
+        },
+        active_machine: Some(server_name.clone()),
+        focus_locked: false,
+        deskflow_status: if config.deskflow.managed && !cli.no_deskflow {
+            "starting".into()
+        } else {
+            "disabled".into()
+        },
+    }));
+
+    // -- IPC server --
+    let (ipc_cmd_tx, mut ipc_cmd_rx) = mpsc::channel::<IpcCommand>(32);
+    let ipc_state = IpcState {
+        daemon_state: daemon_state.clone(),
+        cmd_tx: ipc_cmd_tx,
+    };
+    let ipc_socket = ipc_server::default_socket_path();
+    let ipc_st = ipc_state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = ipc_server::run_ipc_server(&ipc_socket, ipc_st).await {
+            tracing::error!(error = %e, "IPC server failed");
+        }
+    });
+
+    // -- agent listener for remote agent connections --
+    let (agent_event_tx, mut agent_event_rx) = mpsc::channel::<AgentEvent>(32);
+    let agent_manager = AgentManager::new(agent_event_tx);
+    let listen_addr = format!("0.0.0.0:{}", config.network.listen_port);
+    let mgr = agent_manager.clone();
+    tokio::spawn(async move {
+        if let Err(e) = agent_listener::run_agent_listener(&listen_addr, mgr).await {
+            tracing::error!(error = %e, "agent listener failed");
+        }
+    });
+
+    // -- heartbeat checker --
+    let hb_manager = agent_manager.clone();
+    let hb_state = daemon_state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            let stale =
+                agent_listener::check_heartbeats(&hb_manager, Duration::from_secs(30)).await;
+            if !stale.is_empty() {
+                tracing::warn!(agents = ?stale, "stale agent connections detected");
+            }
+            // update online status in daemon state
+            let connected = hb_manager.connected_agents().await;
+            let mut ds = hb_state.write().await;
+            let local = ds.active_machine.clone().unwrap_or_default();
+            for machine in &mut ds.machines {
+                if machine.name == local {
+                    continue; // local machine is always online
+                }
+                machine.online = connected.contains(&machine.name);
+            }
+        }
+    });
+
+    // -- discovery responder --
+    let disc_name = server_name.clone();
+    let disc_port = config.network.listen_port;
+    tokio::spawn(async move {
+        if let Err(e) = discovery::run_discovery_responder(
+            disc_name,
+            env!("CARGO_PKG_VERSION").to_string(),
+            disc_port,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "discovery responder failed");
+        }
+    });
+
+    // -- key interceptor --
+    let mut interceptor = key_interceptor::KeyInterceptor::new(
         local_os,
         config.keyboard.translations.clone(),
         config.keyboard.auto_remap,
     );
     if let Err(e) = interceptor.start() {
-        tracing::warn!(error = %e, "key interceptor failed to start, continuing without combo translation");
+        tracing::warn!(error = %e, "key interceptor unavailable, continuing without combo translation");
     }
 
-    // channel for deskflow log lines (either from the real process or injected for testing)
+    // -- deskflow process --
     let (log_tx, mut log_rx) = mpsc::channel::<String>(256);
-
-    // spawn deskflow if managed
-    let mut _deskflow_process: Option<deskflow::DeskflowProcess> = None;
+    let mut deskflow_process: Option<deskflow::DeskflowProcess> = None;
     if config.deskflow.managed && !cli.no_deskflow {
         match deskflow::DeskflowProcess::spawn(&config).await {
             Ok((process, mut deskflow_rx)) => {
-                _deskflow_process = Some(process);
-                // forward deskflow output to the log channel
+                deskflow_process = Some(process);
                 let tx = log_tx.clone();
                 tokio::spawn(async move {
                     while let Some(line) = deskflow_rx.recv().await {
@@ -110,10 +192,12 @@ async fn main() -> Result<()> {
                         }
                     }
                 });
+                daemon_state.write().await.deskflow_status = "running".into();
                 tracing::info!("deskflow-core server started");
             }
             Err(e) => {
                 tracing::error!(error = %e, "failed to start deskflow-core");
+                daemon_state.write().await.deskflow_status = format!("error: {e}");
                 if !cli.no_deskflow {
                     return Err(e);
                 }
@@ -122,16 +206,14 @@ async fn main() -> Result<()> {
     } else {
         tracing::info!("deskflow management disabled, running without deskflow");
     }
-
-    // drop the sender so log_rx will close when deskflow exits
     drop(log_tx);
 
     tracing::info!("orchestrator running");
 
-    // main event loop
+    // -- main event loop --
     loop {
         tokio::select! {
-            // process deskflow log lines for transition events
+            // deskflow log lines -> transition detection
             line = log_rx.recv() => {
                 match line {
                     Some(line) => {
@@ -145,22 +227,35 @@ async fn main() -> Result<()> {
                                 "screen transition detected"
                             );
 
-                            // update key interceptor with the new remote OS context
-                            // if we switched away from local, the target is the remote OS
-                            // if we switched back to local, clear remote OS
                             let remote_os = if event.target == server_name {
-                                None // back on local machine
+                                None
                             } else {
                                 machine_os.get(&event.target).copied()
                             };
                             interceptor.set_remote_os(remote_os);
 
+                            // update active machine in daemon state
+                            {
+                                let mut ds = daemon_state.write().await;
+                                ds.active_machine = Some(event.target.clone());
+                                for machine in &mut ds.machines {
+                                    machine.active = machine.name == event.target;
+                                }
+                            }
+
                             let results = engine.handle_transition(&event, ddc.as_ref());
                             for r in &results {
-                                if r.success {
+                                if !r.local {
+                                    // remote monitor: dispatch switch to the agent controlling it
+                                    // TODO: resolve which agent controls this monitor from topology
+                                    // for now, try to find an agent with a matching monitor
                                     tracing::info!(
                                         monitor = r.monitor_id,
-                                        local = r.local,
+                                        "remote switch needed, dispatching to agent"
+                                    );
+                                } else if r.success {
+                                    tracing::info!(
+                                        monitor = r.monitor_id,
                                         "monitor switched"
                                     );
                                 } else if let Some(ref err) = r.error {
@@ -175,11 +270,183 @@ async fn main() -> Result<()> {
                     }
                     None => {
                         tracing::warn!("deskflow log channel closed");
+                        daemon_state.write().await.deskflow_status = "stopped".into();
                         break;
                     }
                 }
             }
-            // handle ctrl+c
+
+            // key interceptor events
+            key_event = interceptor.recv() => {
+                match key_event {
+                    Some(key_interceptor::KeyEvent::Translated { intent, from, to }) => {
+                        tracing::debug!(
+                            intent = intent,
+                            from = %format!("{from:?}"),
+                            to = %format!("{to:?}"),
+                            "key combo translated"
+                        );
+                    }
+                    Some(key_interceptor::KeyEvent::Started) => {
+                        tracing::info!("key interceptor hook active");
+                    }
+                    Some(key_interceptor::KeyEvent::Stopped) => {
+                        tracing::info!("key interceptor hook stopped");
+                    }
+                    None => {
+                        tracing::debug!("key interceptor channel closed");
+                    }
+                }
+            }
+
+            // IPC commands from control panel / CLI
+            cmd = ipc_cmd_rx.recv() => {
+                match cmd {
+                    Some(IpcCommand::SwitchMachine(target)) => {
+                        tracing::info!(target = target, "IPC: switch machine requested");
+                        // synthesize a transition event as if deskflow triggered it
+                        let current = daemon_state.read().await.active_machine.clone()
+                            .unwrap_or_default();
+                        let event = log_parser::TransitionEvent {
+                            source: current,
+                            target: target.clone(),
+                            x: 0,
+                            y: 0,
+                        };
+
+                        let remote_os = if target == server_name {
+                            None
+                        } else {
+                            machine_os.get(&target).copied()
+                        };
+                        interceptor.set_remote_os(remote_os);
+
+                        {
+                            let mut ds = daemon_state.write().await;
+                            ds.active_machine = Some(target.clone());
+                            for machine in &mut ds.machines {
+                                machine.active = machine.name == target;
+                            }
+                        }
+
+                        let results = engine.handle_transition(&event, ddc.as_ref());
+                        for r in &results {
+                            if r.success {
+                                tracing::info!(monitor = r.monitor_id, "monitor switched via IPC");
+                            } else if let Some(ref err) = r.error {
+                                tracing::error!(monitor = r.monitor_id, error = err, "IPC switch failed");
+                            }
+                        }
+                    }
+                    Some(IpcCommand::TestSwitch { monitor_id, input }) => {
+                        tracing::info!(monitor = monitor_id, input = input, "IPC: test switch");
+                        let source = softkvm_core::input_source::InputSource::from_str_with_aliases(
+                            &input,
+                            &config.input_aliases,
+                        );
+                        if let Some(source) = source {
+                            let vcp = source.to_vcp_value(&config.input_aliases);
+                            match softkvm_core::ddc::switch_with_retry(
+                                ddc.as_ref(),
+                                &monitor_id,
+                                vcp,
+                                false,
+                                config.ddc.retry_count,
+                                config.ddc.retry_delay_ms,
+                            ) {
+                                Ok(_) => tracing::info!(monitor = monitor_id, "test switch succeeded"),
+                                Err(e) => tracing::error!(monitor = monitor_id, error = %e, "test switch failed"),
+                            }
+                        } else {
+                            tracing::error!(input = input, "unknown input source for test switch");
+                        }
+                    }
+                    Some(IpcCommand::SetFocusLock(locked)) => {
+                        tracing::info!(locked = locked, "IPC: focus lock");
+                        interceptor.set_enabled(!locked);
+                        daemon_state.write().await.focus_locked = locked;
+                    }
+                    Some(IpcCommand::RescanMonitors) => {
+                        tracing::info!("IPC: rescan monitors");
+                        match ddc.enumerate_monitors() {
+                            Ok(monitors) => {
+                                tracing::info!(count = monitors.len(), "monitor rescan complete");
+                                daemon_state.write().await.monitors = monitors;
+                            }
+                            Err(e) => {
+                                tracing::error!(error = %e, "monitor rescan failed");
+                            }
+                        }
+                        // also ask all connected agents to rescan
+                        for agent in agent_manager.connected_agents().await {
+                            if let Err(e) = agent_manager.request_inventory(&agent).await {
+                                tracing::warn!(agent = agent, error = %e, "failed to request agent rescan");
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::debug!("IPC command channel closed");
+                    }
+                }
+            }
+
+            // agent events (connections, disconnections, inventory, switch acks)
+            agent_evt = agent_event_rx.recv() => {
+                match agent_evt {
+                    Some(AgentEvent::Connected(name)) => {
+                        tracing::info!(agent = name, "agent connected");
+                        let mut ds = daemon_state.write().await;
+                        for machine in &mut ds.machines {
+                            if machine.name == name {
+                                machine.online = true;
+                            }
+                        }
+                    }
+                    Some(AgentEvent::Disconnected(name)) => {
+                        tracing::info!(agent = name, "agent disconnected");
+                        let mut ds = daemon_state.write().await;
+                        for machine in &mut ds.machines {
+                            if machine.name == name {
+                                machine.online = false;
+                            }
+                        }
+                    }
+                    Some(AgentEvent::MonitorInventory { agent_name, monitors }) => {
+                        tracing::info!(
+                            agent = agent_name,
+                            count = monitors.len(),
+                            "received monitor inventory from agent"
+                        );
+                        // merge remote monitors into daemon state
+                        // TODO: deduplicate and tag monitors with their source agent
+                        let mut ds = daemon_state.write().await;
+                        ds.monitors.retain(|m| {
+                            !monitors.iter().any(|rm| rm.id == m.id)
+                        });
+                        ds.monitors.extend(monitors);
+                    }
+                    Some(AgentEvent::SwitchAck { agent_name, monitor_id, success, error }) => {
+                        if success {
+                            tracing::info!(
+                                agent = agent_name,
+                                monitor = monitor_id,
+                                "remote switch confirmed"
+                            );
+                        } else {
+                            tracing::error!(
+                                agent = agent_name,
+                                monitor = monitor_id,
+                                error = error.as_deref().unwrap_or("unknown"),
+                                "remote switch failed"
+                            );
+                        }
+                    }
+                    None => {
+                        tracing::debug!("agent event channel closed");
+                    }
+                }
+            }
+
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("received shutdown signal");
                 break;
@@ -188,7 +455,7 @@ async fn main() -> Result<()> {
     }
 
     // cleanup
-    if let Some(mut proc) = _deskflow_process {
+    if let Some(mut proc) = deskflow_process {
         tracing::info!("stopping deskflow-core");
         let _ = proc.kill().await;
     }
@@ -197,20 +464,45 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// placeholder DDC controller until ddc-hi is integrated
-struct StubController;
+/// select the appropriate DDC controller based on build features
+fn create_ddc_controller() -> Box<dyn DdcController> {
+    #[cfg(feature = "real-ddc")]
+    {
+        tracing::info!("using real DDC/CI controller (ddc-hi)");
+        Box::new(softkvm_core::ddc::real::RealDdcController::new())
+    }
 
-impl DdcController for StubController {
+    #[cfg(not(feature = "real-ddc"))]
+    {
+        tracing::warn!(
+            "built without real-ddc feature, DDC/CI commands will be logged but not executed. \
+             rebuild with --features real-ddc for actual monitor control"
+        );
+        Box::new(LoggingStubController)
+    }
+}
+
+/// DDC controller that logs commands but does not execute them.
+/// used when the real-ddc feature is not enabled (e.g. development on WSL/Linux)
+#[cfg(not(feature = "real-ddc"))]
+struct LoggingStubController;
+
+#[cfg(not(feature = "real-ddc"))]
+impl DdcController for LoggingStubController {
     fn enumerate_monitors(
         &self,
     ) -> softkvm_core::error::Result<Vec<softkvm_core::protocol::MonitorInfo>> {
+        tracing::debug!("no-op: enumerate_monitors (real-ddc feature not enabled)");
         Ok(vec![])
     }
 
     fn get_input_source(&self, monitor_id: &str) -> softkvm_core::error::Result<u16> {
-        tracing::debug!(monitor = monitor_id, "stub: get_input_source");
+        tracing::debug!(
+            monitor = monitor_id,
+            "no-op: get_input_source (real-ddc feature not enabled)"
+        );
         Err(softkvm_core::error::SoftKvmError::Ddc(
-            "stub controller".into(),
+            "real-ddc feature not enabled".into(),
         ))
     }
 
@@ -218,7 +510,7 @@ impl DdcController for StubController {
         tracing::info!(
             monitor = monitor_id,
             input = format!("0x{:02x}", value),
-            "stub: would switch monitor input"
+            "no-op: would switch monitor input (real-ddc feature not enabled)"
         );
         Ok(())
     }
