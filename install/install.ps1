@@ -36,7 +36,6 @@ function Main {
     }
 
     Register-Path
-    Build-SetupBinary
     Write-Host ""
     Info "installed to $InstallDir"
     Run-PostInstall
@@ -125,6 +124,26 @@ function Try-SourceInstall {
             }
         }
         if ($copied -eq 0) { throw "no binaries were produced by the build" }
+
+        # build the setup TUI while we still have the source tree
+        if (Get-Command bun -ErrorAction SilentlyContinue) {
+            $setupDir = Join-Path $buildDir "setup"
+            if (Test-Path "$setupDir\package.json") {
+                Info "building setup wizard"
+                try {
+                    Push-Location $setupDir
+                    bun install --silent 2>$null
+                    bun run build 2>$null
+                    $setupBin = "$setupDir\dist\softkvm-setup.exe"
+                    if (Test-Path $setupBin) {
+                        Copy-Item $setupBin "$InstallDir\softkvm-setup.exe" -Force
+                    }
+                }
+                catch { Warn "setup wizard build failed, skipping" }
+                finally { Pop-Location }
+            }
+        }
+
         return $true
     }
     catch {
@@ -136,31 +155,6 @@ function Try-SourceInstall {
             Remove-Item $buildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
-}
-
-function Build-SetupBinary {
-    if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { return }
-
-    # when run via irm | iex, ScriptName is empty so we can't locate the setup dir
-    $scriptName = $MyInvocation.ScriptName
-    if ([string]::IsNullOrEmpty($scriptName)) { return }
-
-    $scriptDir = Split-Path -Parent $scriptName
-    $setupDir = Join-Path (Split-Path -Parent $scriptDir) "setup"
-    if (-not (Test-Path "$setupDir\package.json")) { return }
-
-    Info "building setup wizard"
-    try {
-        Push-Location $setupDir
-        bun install --silent 2>$null
-        bun run build 2>$null
-        $setupBin = "$setupDir\dist\softkvm-setup.exe"
-        if (Test-Path $setupBin) {
-            Copy-Item $setupBin "$InstallDir\softkvm-setup.exe" -Force
-        }
-    }
-    catch { }
-    finally { Pop-Location }
 }
 
 function Register-Path {

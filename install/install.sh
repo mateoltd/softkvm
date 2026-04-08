@@ -37,7 +37,6 @@ main() {
   fi
 
   register_path
-  build_setup_binary
   echo ""
   info "installed to ${INSTALL_DIR}"
   run_post_install
@@ -141,6 +140,19 @@ try_source_install() {
     return 1
   fi
 
+  # build the setup TUI while we still have the source tree
+  if command -v bun &>/dev/null; then
+    local setup_dir="${build_dir}/setup"
+    if [ -f "${setup_dir}/package.json" ]; then
+      info "building setup wizard"
+      (cd "${setup_dir}" && bun install --silent 2>/dev/null && bun run build 2>/dev/null) || true
+      if [ -f "${setup_dir}/dist/softkvm-setup" ]; then
+        cp "${setup_dir}/dist/softkvm-setup" "${INSTALL_DIR}/"
+        chmod +x "${INSTALL_DIR}/softkvm-setup"
+      fi
+    fi
+  fi
+
   return 0
 }
 
@@ -152,35 +164,6 @@ install_rust() {
   # shellcheck disable=SC1091
   source "${HOME}/.cargo/env" 2>/dev/null || true
   command -v cargo &>/dev/null
-}
-
-build_setup_binary() {
-  # build the setup TUI if bun is available
-  if ! command -v bun &>/dev/null; then
-    return 0
-  fi
-
-  local setup_dir
-  # check if we cloned the repo during source build
-  if [ -d "${INSTALL_DIR}/../setup" ]; then
-    setup_dir="${INSTALL_DIR}/../setup"
-  else
-    # try to find it relative to the script
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [ -d "${script_dir}/../setup" ]; then
-      setup_dir="${script_dir}/../setup"
-    else
-      return 0
-    fi
-  fi
-
-  info "building setup wizard"
-  (cd "${setup_dir}" && bun install --silent 2>/dev/null && bun run build 2>/dev/null) || true
-  if [ -f "${setup_dir}/dist/softkvm-setup" ]; then
-    cp "${setup_dir}/dist/softkvm-setup" "${INSTALL_DIR}/"
-    chmod +x "${INSTALL_DIR}/softkvm-setup"
-  fi
 }
 
 register_path() {
@@ -231,14 +214,6 @@ run_post_install() {
   # run interactive setup
   if [ -f "${INSTALL_DIR}/softkvm-setup" ]; then
     "${INSTALL_DIR}/softkvm-setup"
-  elif command -v bun &>/dev/null; then
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [ -f "${script_dir}/../setup/src/index.ts" ]; then
-      (cd "${script_dir}/../setup" && bun run dev)
-    else
-      show_manual_setup
-    fi
   else
     show_manual_setup
   fi
