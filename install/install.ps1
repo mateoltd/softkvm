@@ -108,7 +108,7 @@ function Try-SourceInstall {
         $buildOut = cargo build --release --manifest-path "$buildDir\Cargo.toml" `
             --features real-ddc --no-default-features 2>&1
         if ($LASTEXITCODE -ne 0) {
-            $errors = $buildOut | Where-Object { $_ -match "error" } | Select-Object -Last 5
+            $errors = $buildOut | Where-Object { $_ -match "error\[" } | Select-Object -Last 20
             throw "cargo build failed:`n$($errors -join "`n")"
         }
 
