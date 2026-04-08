@@ -107,7 +107,10 @@ function Try-SourceInstall {
         Info "building (release mode)"
         $buildOut = cargo build --release --manifest-path "$buildDir\Cargo.toml" `
             --features real-ddc --no-default-features 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+        if ($LASTEXITCODE -ne 0) {
+            $errors = $buildOut | Where-Object { $_ -match "error" } | Select-Object -Last 5
+            throw "cargo build failed:`n$($errors -join "`n")"
+        }
 
         Info "copying binaries"
         foreach ($bin in @("softkvm", "softkvm-orchestrator", "softkvm-agent")) {
