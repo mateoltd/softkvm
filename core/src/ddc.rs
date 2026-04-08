@@ -9,6 +9,9 @@ use crate::protocol::MonitorInfo;
 /// VCP code for input source selection.
 pub const VCP_INPUT_SOURCE: u8 = 0x60;
 
+/// VCP code for brightness (luminance).
+pub const VCP_BRIGHTNESS: u8 = 0x10;
+
 /// Trait abstracting DDC/CI monitor operations.
 /// Implementations exist per-platform (Windows, macOS, Linux).
 pub trait DdcController: Send + Sync {
@@ -20,6 +23,12 @@ pub trait DdcController: Send + Sync {
 
     /// Set the input source VCP value for a monitor.
     fn set_input_source(&self, monitor_id: &str, value: u16) -> Result<()>;
+
+    /// Read a raw VCP feature value.
+    fn get_vcp_feature(&self, monitor_id: &str, code: u8) -> Result<u16>;
+
+    /// Write a raw VCP feature value.
+    fn set_vcp_feature(&self, monitor_id: &str, code: u8, value: u16) -> Result<()>;
 }
 
 /// Switch a monitor's input source with retry logic.
@@ -260,6 +269,25 @@ pub mod real {
                     ))
                 })
         }
+
+        fn get_vcp_feature(&self, monitor_id: &str, code: u8) -> Result<u16> {
+            let mut display = Self::find_display(monitor_id)?;
+            let val = display.handle.get_vcp_feature(code).map_err(|e| {
+                crate::error::SoftKvmError::Ddc(format!(
+                    "failed to read VCP 0x{code:02x} for {monitor_id}: {e}"
+                ))
+            })?;
+            Ok(val.value() as u16)
+        }
+
+        fn set_vcp_feature(&self, monitor_id: &str, code: u8, value: u16) -> Result<()> {
+            let mut display = Self::find_display(monitor_id)?;
+            display.handle.set_vcp_feature(code, value).map_err(|e| {
+                crate::error::SoftKvmError::Ddc(format!(
+                    "failed to set VCP 0x{code:02x} for {monitor_id}: {e}"
+                ))
+            })
+        }
     }
 }
 
@@ -327,6 +355,25 @@ pub mod stub {
             let mut monitors = self.monitors.lock().unwrap();
             if monitors.contains_key(monitor_id) {
                 monitors.insert(monitor_id.to_string(), value);
+                Ok(())
+            } else {
+                Err(crate::error::SoftKvmError::MonitorNotFound(
+                    monitor_id.into(),
+                ))
+            }
+        }
+
+        fn get_vcp_feature(&self, monitor_id: &str, _code: u8) -> Result<u16> {
+            let monitors = self.monitors.lock().unwrap();
+            monitors
+                .get(monitor_id)
+                .copied()
+                .ok_or_else(|| crate::error::SoftKvmError::MonitorNotFound(monitor_id.into()))
+        }
+
+        fn set_vcp_feature(&self, monitor_id: &str, _code: u8, _value: u16) -> Result<()> {
+            let monitors = self.monitors.lock().unwrap();
+            if monitors.contains_key(monitor_id) {
                 Ok(())
             } else {
                 Err(crate::error::SoftKvmError::MonitorNotFound(

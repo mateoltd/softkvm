@@ -514,4 +514,30 @@ impl DdcController for LoggingStubController {
         );
         Ok(())
     }
+
+    fn get_vcp_feature(&self, monitor_id: &str, code: u8) -> softkvm_core::error::Result<u16> {
+        tracing::debug!(
+            monitor = monitor_id,
+            code = format!("0x{:02x}", code),
+            "no-op: get_vcp_feature (real-ddc feature not enabled)"
+        );
+        Err(softkvm_core::error::SoftKvmError::Ddc(
+            "real-ddc feature not enabled".into(),
+        ))
+    }
+
+    fn set_vcp_feature(
+        &self,
+        monitor_id: &str,
+        code: u8,
+        value: u16,
+    ) -> softkvm_core::error::Result<()> {
+        tracing::info!(
+            monitor = monitor_id,
+            code = format!("0x{:02x}", code),
+            value = value,
+            "no-op: would set VCP feature (real-ddc feature not enabled)"
+        );
+        Ok(())
+    }
 }
