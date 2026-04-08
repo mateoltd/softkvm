@@ -187,14 +187,18 @@ async function main() {
     }
   }
 
-  // scan monitors
+  // scan monitors, filter to only those with working DDC/CI
   spinner.start("scanning monitors for DDC/CI support");
-  const monitors = await scanMonitors();
-  spinner.stop(
-    monitors.length > 0
-      ? `found ${monitors.length} monitor(s) with DDC/CI support`
-      : "no DDC/CI monitors detected (will configure manually later)"
-  );
+  const allMonitors = await scanMonitors();
+  const monitors = allMonitors.filter((m) => m.ddc_supported);
+  const skipped = allMonitors.length - monitors.length;
+  let scanMsg = monitors.length > 0
+    ? `found ${monitors.length} monitor(s) with DDC/CI support`
+    : "no DDC/CI monitors detected (will configure manually later)";
+  if (skipped > 0) {
+    scanMsg += ` (${skipped} without DDC/CI skipped)`;
+  }
+  spinner.stop(scanMsg);
 
   const monitorSetups: MonitorSetup[] = [];
 

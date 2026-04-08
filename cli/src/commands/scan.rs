@@ -42,7 +42,16 @@ pub async fn run(json: bool) -> Result<()> {
             return Ok(());
         }
 
-        println!("found {} monitor(s) with DDC/CI support:\n", monitors.len());
+        let ddc_count = monitors.iter().filter(|m| m.ddc_supported).count();
+        if ddc_count == monitors.len() {
+            println!("found {} monitor(s) with DDC/CI support:\n", monitors.len());
+        } else {
+            println!(
+                "found {} monitor(s), {} with DDC/CI support:\n",
+                monitors.len(),
+                ddc_count
+            );
+        }
 
         for (i, m) in monitors.iter().enumerate() {
             let input_str = match m.current_input_vcp {
