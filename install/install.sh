@@ -262,18 +262,14 @@ run_post_install() {
     echo ""
   fi
 
-  # run interactive setup — stdin may be a pipe (curl | bash), so
-  # reattach the terminal for interactive prompts
+  # run interactive setup — use exec to hand full terminal control to
+  # the TUI process (matches the pattern in working curl|sh installers)
   if [ -f "${INSTALL_DIR}/softkvm-setup" ]; then
     if [ -e /dev/tty ]; then
-      "${INSTALL_DIR}/softkvm-setup" </dev/tty || {
-        warn "setup wizard exited unexpectedly"
-        show_manual_setup
-      }
-    else
-      warn "non-interactive environment, skipping setup wizard"
-      show_manual_setup
+      exec "${INSTALL_DIR}/softkvm-setup" </dev/tty
     fi
+    # /dev/tty unavailable or exec failed
+    show_manual_setup
   else
     show_manual_setup
   fi
