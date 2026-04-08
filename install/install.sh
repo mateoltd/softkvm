@@ -122,15 +122,24 @@ try_source_install() {
 
   info "building (release mode)"
   cargo build --release --manifest-path "${build_dir}/Cargo.toml" \
-    --features real-ddc --no-default-features 2>&1 | tail -1
+    --workspace \
+    --features softkvm-orchestrator/real-ddc,softkvm-cli/real-ddc 2>&1 | tail -1
 
   info "copying binaries"
+  local copied=0
   for bin in softkvm softkvm-orchestrator softkvm-agent; do
     if [ -f "${build_dir}/target/release/${bin}" ]; then
       cp "${build_dir}/target/release/${bin}" "${INSTALL_DIR}/"
       chmod +x "${INSTALL_DIR}/${bin}"
+      copied=$((copied + 1))
+    else
+      warn "binary not found: ${bin}"
     fi
   done
+  if [ "${copied}" -eq 0 ]; then
+    error "no binaries were produced by the build"
+    return 1
+  fi
 
   return 0
 }

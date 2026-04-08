@@ -106,19 +106,25 @@ function Try-SourceInstall {
 
         Info "building (release mode)"
         $buildOut = cargo build --release --manifest-path "$buildDir\Cargo.toml" `
-            --features real-ddc --no-default-features 2>&1
+            --workspace `
+            --features softkvm-orchestrator/real-ddc,softkvm-cli/real-ddc 2>&1
         if ($LASTEXITCODE -ne 0) {
             $errors = $buildOut | Where-Object { $_ -match "error\[" } | Select-Object -Last 20
             throw "cargo build failed:`n$($errors -join "`n")"
         }
 
         Info "copying binaries"
+        $copied = 0
         foreach ($bin in @("softkvm", "softkvm-orchestrator", "softkvm-agent")) {
             $src = "$buildDir\target\release\$bin.exe"
             if (Test-Path $src) {
                 Copy-Item $src "$InstallDir\$bin.exe" -Force
+                $copied++
+            } else {
+                Warn "binary not found: $bin.exe"
             }
         }
+        if ($copied -eq 0) { throw "no binaries were produced by the build" }
         return $true
     }
     catch {
