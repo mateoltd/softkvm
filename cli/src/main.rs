@@ -43,6 +43,12 @@ enum Commands {
     Update,
     /// run interactive setup
     Setup,
+    /// remove softkvm, its config, and registered services
+    Uninstall {
+        /// skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[tokio::main]
@@ -57,5 +63,6 @@ async fn main() -> Result<()> {
         Commands::Status => commands::status::run().await,
         Commands::Update => commands::update::run().await,
         Commands::Setup => commands::setup::run().await,
+        Commands::Uninstall { yes } => commands::uninstall::run(yes).await,
     }
 }

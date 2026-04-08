@@ -518,6 +518,15 @@ async function registerWindowsTask(name: string, binPath: string, configPath: st
   // use HKCU Run key (no admin required, runs at user logon)
   const val = `"${binPath}" --config "${configPath}"`;
   execQuiet(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d ${val} /f`);
+
+  // add firewall rules for discovery (UDP) and agent connections (TCP)
+  try {
+    execQuiet(`netsh advfirewall firewall add rule name="softkvm discovery" dir=in action=allow protocol=UDP localport=24802`);
+    execQuiet(`netsh advfirewall firewall add rule name="softkvm agent" dir=in action=allow protocol=TCP localport=24801`);
+  } catch (e) {
+    p.log.warn(`could not add firewall rules (requires admin): ${e}`);
+    p.log.info("run as administrator or manually allow UDP 24802 and TCP 24801");
+  }
   return true;
 }
 
