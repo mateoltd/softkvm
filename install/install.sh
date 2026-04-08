@@ -148,18 +148,13 @@ try_source_install() {
     return 1
   fi
 
-  # build the setup TUI while we still have the source tree
+  # compile the setup TUI while we still have the source tree
   if command -v bun &>/dev/null; then
     local setup_dir="${build_dir}/setup"
     if [ -f "${setup_dir}/package.json" ]; then
-      info "building setup wizard"
-      if (cd "${setup_dir}" && bun install --silent 2>/dev/null && bun run build 2>/dev/null); then
-        if [ -f "${setup_dir}/dist/softkvm-setup" ]; then
-          cp "${setup_dir}/dist/softkvm-setup" "${INSTALL_DIR}/"
-          chmod +x "${INSTALL_DIR}/softkvm-setup"
-        else
-          warn "setup wizard binary not produced"
-        fi
+      info "compiling setup wizard"
+      if (cd "${setup_dir}" && bun install --silent 2>/dev/null && bun build --compile --outfile="${INSTALL_DIR}/softkvm-setup" src/index.ts 2>/dev/null); then
+        chmod +x "${INSTALL_DIR}/softkvm-setup"
       else
         warn "setup wizard build failed (will use manual setup)"
       fi
@@ -268,9 +263,12 @@ run_post_install() {
   fi
 
   # run interactive setup — stdin may be a pipe (curl | bash), so
-  # reattach the terminal for interactive prompts
+  # reattach the terminal for interactive prompts.  only redirect stdin;
+  # redirecting stdout/stderr to /dev/tty breaks Bun's kqueue-backed
+  # TTY WriteStream (EINVAL on the re-opened fd).
   if [ -f "${INSTALL_DIR}/softkvm-setup" ]; then
     if [ -e /dev/tty ]; then
+      stty sane < /dev/tty 2>/dev/null || true
       "${INSTALL_DIR}/softkvm-setup" </dev/tty || {
         warn "setup wizard exited unexpectedly"
         show_manual_setup

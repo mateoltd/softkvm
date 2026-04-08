@@ -41,8 +41,8 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let (config, config_path) = Config::load_or_find(&cli.config)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (config, config_path) =
+        Config::load_or_find(&cli.config).map_err(|e| anyhow::anyhow!("{e}"))?;
     tracing::info!(config = config_path, "using config");
 
     let server_name = config

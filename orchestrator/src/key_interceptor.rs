@@ -384,7 +384,9 @@ mod mac_hook {
 
         let _ = tx.blocking_send(KeyEvent::Started);
 
-        let source = tap.mach_port().create_runloop_source(0)
+        let source = tap
+            .mach_port()
+            .create_runloop_source(0)
             .map_err(|_| anyhow::anyhow!("failed to create run loop source from event tap"))?;
         let run_loop = CFRunLoop::get_current();
         run_loop.add_source(&source, unsafe { kCFRunLoopCommonModes });

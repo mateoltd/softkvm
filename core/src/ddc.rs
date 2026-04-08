@@ -390,8 +390,8 @@ pub mod m1ddc_backend {
 
     impl DdcController for M1DdcController {
         fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>> {
-            let output = Self::run(&["display", "list"])
-                .map_err(|e| crate::error::SoftKvmError::Ddc(e))?;
+            let output =
+                Self::run(&["display", "list"]).map_err(|e| crate::error::SoftKvmError::Ddc(e))?;
 
             let displays = Self::parse_display_list(&output);
             let mut monitors = Vec::new();
@@ -446,8 +446,9 @@ pub mod m1ddc_backend {
         fn get_vcp_feature(&self, monitor_id: &str, code: u8) -> Result<u16> {
             let uuid = self.uuid_for(monitor_id)?;
             let feature = Self::vcp_to_feature(code)?;
-            let output = Self::run(&["display", &uuid, "get", feature])
-                .map_err(|e| crate::error::SoftKvmError::Ddc(format!("m1ddc get {feature}: {e}")))?;
+            let output = Self::run(&["display", &uuid, "get", feature]).map_err(|e| {
+                crate::error::SoftKvmError::Ddc(format!("m1ddc get {feature}: {e}"))
+            })?;
             output.parse::<u16>().map_err(|e| {
                 crate::error::SoftKvmError::Ddc(format!(
                     "m1ddc parse {feature} value '{output}': {e}"
@@ -459,8 +460,9 @@ pub mod m1ddc_backend {
             let uuid = self.uuid_for(monitor_id)?;
             let feature = Self::vcp_to_feature(code)?;
             let val = value.to_string();
-            Self::run(&["display", &uuid, "set", feature, &val])
-                .map_err(|e| crate::error::SoftKvmError::Ddc(format!("m1ddc set {feature}: {e}")))?;
+            Self::run(&["display", &uuid, "set", feature, &val]).map_err(|e| {
+                crate::error::SoftKvmError::Ddc(format!("m1ddc set {feature}: {e}"))
+            })?;
             Ok(())
         }
     }
@@ -478,10 +480,7 @@ pub mod m1ddc_backend {
             let displays = M1DdcController::parse_display_list(output);
             assert_eq!(displays.len(), 3);
             assert_eq!(displays[0].0, "LG ULTRAGEAR+");
-            assert_eq!(
-                displays[0].1,
-                "F0DB7A7E-6804-4F3B-8687-200C7CBCE0C8"
-            );
+            assert_eq!(displays[0].1, "F0DB7A7E-6804-4F3B-8687-200C7CBCE0C8");
             assert_eq!(displays[1].0, "LC27G5xT");
             assert_eq!(displays[2].0, "(null)");
         }
