@@ -83,6 +83,9 @@ function Try-ReleaseInstall {
 }
 
 function Try-SourceInstall {
+    # native commands (git, cargo) write progress to stderr which
+    # ErrorActionPreference=Stop treats as terminating errors
+    $ErrorActionPreference = 'Continue'
     # need git + cargo
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Error "git is required to build from source"
