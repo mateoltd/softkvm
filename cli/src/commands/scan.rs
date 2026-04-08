@@ -72,35 +72,18 @@ pub async fn run(json: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "stub-ddc")]
-fn create_controller() -> Box<dyn DdcController> {
-    Box::new(softkvm_core::ddc::stub::StubDdcController::new())
-}
-
-#[cfg(all(not(feature = "stub-ddc"), feature = "real-ddc"))]
+// real-ddc takes priority when both features are enabled (default includes stub-ddc)
+#[cfg(feature = "real-ddc")]
 fn create_controller() -> Box<dyn DdcController> {
     Box::new(softkvm_core::ddc::real::RealDdcController::new())
 }
 
-#[cfg(all(not(feature = "stub-ddc"), not(feature = "real-ddc")))]
+#[cfg(all(not(feature = "real-ddc"), feature = "stub-ddc"))]
 fn create_controller() -> Box<dyn DdcController> {
-    struct NullController;
-    impl DdcController for NullController {
-        fn enumerate_monitors(
-            &self,
-        ) -> softkvm_core::error::Result<Vec<softkvm_core::protocol::MonitorInfo>> {
-            Ok(vec![])
-        }
-        fn get_input_source(&self, id: &str) -> softkvm_core::error::Result<u16> {
-            Err(softkvm_core::error::SoftKvmError::Ddc(format!(
-                "no DDC backend available for {id}"
-            )))
-        }
-        fn set_input_source(&self, id: &str, _value: u16) -> softkvm_core::error::Result<()> {
-            Err(softkvm_core::error::SoftKvmError::Ddc(format!(
-                "no DDC backend available for {id}"
-            )))
-        }
-    }
-    Box::new(NullController)
+    Box::new(softkvm_core::ddc::stub::StubDdcController::new())
+}
+
+#[cfg(all(not(feature = "real-ddc"), not(feature = "stub-ddc")))]
+fn create_controller() -> Box<dyn DdcController> {
+    compile_error!("enable either the real-ddc or stub-ddc feature");
 }
