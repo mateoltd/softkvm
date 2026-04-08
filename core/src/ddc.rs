@@ -210,18 +210,29 @@ pub mod real {
                     .clone()
                     .unwrap_or_else(|| "Unknown".into());
 
-                // try to read current input source
-                let current_input_vcp = match display.handle.get_vcp_feature(VCP_INPUT_SOURCE) {
-                    Ok(val) => Some(val.value() as u16),
-                    Err(e) => {
-                        tracing::debug!(
-                            monitor = %id,
-                            error = %e,
-                            "failed to read VCP 0x60"
-                        );
-                        None
+                // try to read current input source (retry up to 3 times;
+                // DDC buses are flaky, especially when the monitor is
+                // showing a different input or waking from standby)
+                let mut current_input_vcp = None;
+                for attempt in 0..3 {
+                    match display.handle.get_vcp_feature(VCP_INPUT_SOURCE) {
+                        Ok(val) => {
+                            current_input_vcp = Some(val.value() as u16);
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                monitor = %id,
+                                attempt = attempt + 1,
+                                error = %e,
+                                "failed to read VCP 0x60"
+                            );
+                            if attempt < 2 {
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                            }
+                        }
                     }
-                };
+                }
 
                 let ddc_supported = current_input_vcp.is_some();
 
