@@ -4,7 +4,7 @@ import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { $ } from "bun";
 import { discoverServers, type ServerInfo } from "./discover";
-import { scanMonitors, KNOWN_INPUTS, monitorLabel, monitorHint, type MonitorInfo } from "./monitor-scan";
+import { scanMonitors, KNOWN_INPUTS, detectedInputConfigValue, detectedInputLabel, monitorLabel, monitorHint, type MonitorInfo } from "./monitor-scan";
 import { generateConfig, type SetupAnswers, type MonitorSetup } from "./config-gen";
 
 function detectOs(): "windows" | "macos" | "linux" {
@@ -23,15 +23,6 @@ function configDir(): string {
     return join(process.env.LOCALAPPDATA ?? join(process.env.HOME ?? "~", "AppData", "Local"), "softkvm");
   }
   return join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "~", ".config"), "softkvm");
-}
-
-// build input source options for a monitor, highlighting its current input
-function inputOptions(currentInput: string | null) {
-  return KNOWN_INPUTS.map((inp) => ({
-    value: inp.value,
-    label: inp.label,
-    hint: inp.vcp + (currentInput === inp.value ? " (current)" : ""),
-  }));
 }
 
 // identify a monitor by briefly blanking its screen
@@ -266,37 +257,35 @@ async function main() {
 
     for (const mon of selectedMonitors) {
       const label = labels.get(mon.id) ?? mon.id;
-      p.log.info(`configuring ${label}`);
 
-      const localInput = await p.select({
-        message: `input on "${label}" connected to this machine (${machineName})?`,
-        options: inputOptions(mon.current_input),
-      });
-      if (p.isCancel(localInput)) {
-        p.cancel("setup cancelled");
-        process.exit(0);
-      }
+      // local input: use detected value when available
+      let localInputValue = detectedInputConfigValue(mon);
+      const localInputDisplay = detectedInputLabel(mon);
 
-      // only ask for remote input if we have a remote machine configured
-      let remoteInput: string | undefined;
-      if (serverName) {
-        const ri = await p.select({
-          message: `input on "${label}" connected to "${serverName}"?`,
-          options: inputOptions(null),
+      if (localInputValue && localInputDisplay) {
+        p.log.info(`${label}: this machine is on ${localInputDisplay}`);
+      } else {
+        // detection failed, ask the user
+        p.log.warn(`${label}: could not detect current input`);
+        const li = await p.select({
+          message: `input on "${label}" connected to this machine (${machineName})?`,
+          options: KNOWN_INPUTS.map((inp) => ({
+            value: inp.value,
+            label: inp.label,
+            hint: inp.vcp,
+          })),
         });
-        if (p.isCancel(ri)) {
+        if (p.isCancel(li)) {
           p.cancel("setup cancelled");
           process.exit(0);
         }
-        remoteInput = ri as string;
+        localInputValue = li as string;
       }
 
       monitorSetups.push({
         name: label,
         monitorId: mon.id,
-        localInput: localInput as string,
-        remoteInput: remoteInput ?? "",
-        remoteMachineName: serverName ?? "",
+        localInput: localInputValue!,
       });
     }
   }

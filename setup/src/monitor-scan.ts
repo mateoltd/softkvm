@@ -34,6 +34,30 @@ export const KNOWN_INPUTS = [
   { value: "HDMI2", label: "HDMI 2", vcp: "0x12" },
 ];
 
+// find the known input matching a VCP hex string, or null
+export function knownInputByVcp(vcp: string | null): typeof KNOWN_INPUTS[number] | null {
+  if (!vcp) return null;
+  return KNOWN_INPUTS.find((inp) => inp.vcp === vcp) ?? null;
+}
+
+// resolve the detected input to the config value to store
+// returns the well-known name (e.g. "DisplayPort1") or raw hex (e.g. "0x07")
+export function detectedInputConfigValue(mon: MonitorInfo): string | null {
+  if (!mon.current_input_vcp) return null;
+  // current_input from scan is already the right format:
+  // known inputs are "DisplayPort1", "HDMI1", etc.
+  // non-standard are "0x07", "0x1b", etc.
+  return mon.current_input ?? mon.current_input_vcp;
+}
+
+// human-readable label for the detected input (e.g. "DisplayPort 1 (0x0f)")
+export function detectedInputLabel(mon: MonitorInfo): string | null {
+  if (!mon.current_input_vcp) return null;
+  const known = knownInputByVcp(mon.current_input_vcp);
+  if (known) return `${known.label} (${known.vcp})`;
+  return `${mon.current_input_vcp} (non-standard)`;
+}
+
 // build a display label for a monitor, handling unknown/missing fields
 export function monitorLabel(mon: MonitorInfo): string {
   const name = mon.name === "Unknown" ? null : mon.name;

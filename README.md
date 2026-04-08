@@ -32,27 +32,48 @@ After install, open a new terminal and the `softkvm` command is available global
 
 ## What the setup wizard does
 
-The installer automatically runs the setup wizard after installing. It handles everything:
+The installer runs the setup wizard after installing. Run it on **both machines**. Each machine auto-detects its own monitor inputs via DDC/CI, so there is no guessing VCP codes.
+
+**On the first machine (server):**
 
 ```
-▸ scanning network for existing softkvm servers
+▸ no servers found on the network
+
+◆ what role should this machine play?
+│ ● Server (recommended)
+
+◆ machine name?
+│ Windows-PC
+
+▸ scanning monitors for DDC/CI support
+▸ found 2 monitor(s) with DDC/CI support
+
+◆ which monitors should softkvm control?
+│ ◉ Dell U2720Q
+│ ◉ IC274K-4I
+
+ℹ Dell U2720Q: this machine is on DisplayPort 1 (0x0f)
+ℹ IC274K-4I: this machine is on 0x07 (non-standard)
+
+▸ configuration written to %LOCALAPPDATA%\softkvm\softkvm.toml
+```
+
+**On the second machine (client):**
+
+```
 ▸ found 1 server(s): Windows-PC (192.168.1.100)
 
 ◆ what role should this machine play?
 │ ● Client (recommended) — server detected on your network
-│ ○ Server
 
 ◆ machine name?
 │ MacBook
 
-◆ scanning monitors for DDC/CI support
-▸ found 2 monitor(s)
+▸ scanning monitors for DDC/CI support
+▸ found 2 monitor(s) with DDC/CI support
 
-◆ which input on "Dell U2720Q" corresponds to this machine (MacBook)?
-│ HDMI1
-
-◆ which input corresponds to "Windows-PC"?
-│ DisplayPort1
+ℹ Dell U2720Q: this machine is on HDMI 1 (0x11)
+ℹ IC274K-4I: this machine is on HDMI 2 (0x12)
 
 ◆ where is "Windows-PC" relative to this machine?
 │ ● Left
@@ -60,7 +81,9 @@ The installer automatically runs the setup wizard after installing. It handles e
 ▸ configuration written to ~/.config/softkvm/softkvm.toml
 ```
 
-No manual config editing needed. Run `softkvm setup` anytime to reconfigure.
+When the client connects to the server, it sends its detected monitor inputs automatically. The server merges them into the full input mapping. No manual config editing needed for either machine, even with non-standard VCP values.
+
+Run `softkvm setup` anytime to reconfigure.
 
 ## Start the daemons
 
@@ -261,11 +284,10 @@ os = "windows"                  # "windows", "macos", "linux"
 [[monitor]]
 name = "Dell U2720Q"
 monitor_id = "DEL:U2720Q:ABC123"
-connected_to = "Windows-PC"     # which machine physically drives DDC
 
-[monitor.inputs]                # input source per machine
-"Windows-PC" = "DisplayPort1"
-"MacBook" = "HDMI1"
+[monitor.inputs]                # input source per machine (auto-detected during setup)
+"Windows-PC" = "DisplayPort1"   # added by server setup
+"MacBook" = "HDMI1"             # added when client connects
 
 [layout]                        # spatial arrangement
 "Windows-PC" = { right = "MacBook" }

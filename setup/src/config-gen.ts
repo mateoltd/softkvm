@@ -12,8 +12,6 @@ export interface MonitorSetup {
   name: string;
   monitorId: string;
   localInput: string;
-  remoteInput: string;
-  remoteMachineName: string;
 }
 
 export interface LayoutSetup {
@@ -63,9 +61,6 @@ export function generateConfig(answers: SetupAnswers): string {
     lines.push(``);
     lines.push(`[monitor.inputs]`);
     lines.push(`"${answers.machineName}" = "${mon.localInput}"`);
-    if (mon.remoteMachineName && mon.remoteInput) {
-      lines.push(`"${mon.remoteMachineName}" = "${mon.remoteInput}"`);
-    }
     lines.push(``);
   }
 
