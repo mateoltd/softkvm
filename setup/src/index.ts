@@ -570,8 +570,8 @@ WantedBy=default.target
 
 async function registerWindowsTask(name: string, binPath: string, configPath: string): Promise<boolean> {
   // use HKCU Run key (no admin required, runs at user logon)
-  const val = `"${binPath}" --config "${configPath}"`;
-  execQuiet(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d ${val} /f`);
+  const val = `\\"${binPath}\\" --config \\"${configPath}\\"`;
+  execQuiet(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d "${val}" /f`);
 
   // add firewall rules for discovery (UDP) and agent connections (TCP)
   try {
