@@ -198,11 +198,9 @@ async fn main() -> Result<()> {
                 tracing::info!("deskflow-core server started");
             }
             Err(e) => {
-                tracing::error!(error = %e, "failed to start deskflow-core");
+                tracing::warn!(error = %e, "deskflow-core not available, running without cursor-edge switching");
+                tracing::warn!("install deskflow and ensure deskflow-core is in PATH to enable it");
                 daemon_state.write().await.deskflow_status = format!("error: {e}");
-                if !cli.no_deskflow {
-                    return Err(e);
-                }
             }
         }
     } else {
@@ -210,13 +208,15 @@ async fn main() -> Result<()> {
     }
     drop(log_tx);
 
+    let mut deskflow_active = deskflow_process.is_some();
+
     tracing::info!("orchestrator running");
 
     // -- main event loop --
     loop {
         tokio::select! {
             // deskflow log lines -> transition detection
-            line = log_rx.recv() => {
+            line = log_rx.recv(), if deskflow_active => {
                 match line {
                     Some(line) => {
                         tracing::trace!(line = line, "deskflow output");
@@ -273,7 +273,7 @@ async fn main() -> Result<()> {
                     None => {
                         tracing::warn!("deskflow log channel closed");
                         daemon_state.write().await.deskflow_status = "stopped".into();
-                        break;
+                        deskflow_active = false;
                     }
                 }
             }
