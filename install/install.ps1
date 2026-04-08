@@ -31,7 +31,7 @@ function Main {
         Error "installation failed"
         Write-Host ""
         Write-Host "  manual install: https://github.com/$Repo#build-from-source"
-        exit 1
+        return
     }
 
     Register-Path
@@ -46,7 +46,7 @@ function Detect-Platform {
     switch ($Arch) {
         "X64"   { $t = "x86_64-pc-windows-msvc" }
         "Arm64" { $t = "aarch64-pc-windows-msvc" }
-        default { Error "unsupported architecture: $Arch"; exit 1 }
+        default { Error "unsupported architecture: $Arch"; return }
     }
     Info "platform: $t"
     return $t
