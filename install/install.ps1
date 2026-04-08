@@ -98,11 +98,13 @@ function Try-SourceInstall {
 
     try {
         Info "cloning repository"
-        git clone --depth 1 $RepoUrl $buildDir 2>$null
+        $cloneOut = git clone --depth 1 --quiet $RepoUrl $buildDir 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "git clone failed: $cloneOut" }
 
         Info "building (release mode)"
-        cargo build --release --manifest-path "$buildDir\Cargo.toml" `
-            --features real-ddc --no-default-features 2>&1 | Select-Object -Last 1
+        $buildOut = cargo build --release --manifest-path "$buildDir\Cargo.toml" `
+            --features real-ddc --no-default-features 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
         Info "copying binaries"
         foreach ($bin in @("softkvm", "softkvm-orchestrator", "softkvm-agent")) {
