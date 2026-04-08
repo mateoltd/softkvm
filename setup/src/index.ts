@@ -74,8 +74,60 @@ function assignUniqueLabels(monitors: MonitorInfo[]): Map<string, string> {
   return labels;
 }
 
+// check if deskflow-core is available (in PATH or known locations)
+function findDeskflowCore(): string | null {
+  // check PATH
+  try {
+    const cmd = detectOs() === "windows" ? "where deskflow-core" : "which deskflow-core";
+    return exec(cmd).split("\n")[0] || null;
+  } catch {}
+
+  // check known install locations
+  const os = detectOs();
+  const candidates: string[] = [];
+  if (os === "macos") {
+    candidates.push("/Applications/Deskflow.app/Contents/MacOS/deskflow-core");
+  } else if (os === "windows") {
+    const pf = process.env.ProgramFiles ?? "C:\\Program Files";
+    candidates.push(join(pf, "Deskflow", "deskflow-core.exe"));
+  } else {
+    candidates.push("/usr/bin/deskflow-core", "/usr/local/bin/deskflow-core");
+  }
+
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return null;
+}
+
 async function main() {
   p.intro("softkvm setup");
+
+  // check dependencies
+  const deskflowPath = findDeskflowCore();
+  if (!deskflowPath) {
+    const os = detectOs();
+    p.log.warn("deskflow-core not found (required for mouse/keyboard sharing)");
+    if (os === "macos") {
+      p.log.info("install: brew install --cask deskflow/tap/deskflow");
+    } else if (os === "windows") {
+      p.log.info("install: winget install --id=Deskflow.Deskflow -e");
+    } else {
+      p.log.info("install via your package manager, or download from:");
+      p.log.info("https://github.com/deskflow/deskflow/releases");
+    }
+
+    const cont = await p.confirm({
+      message: "continue setup without deskflow? (DDC switching will work, but no mouse/keyboard sharing)",
+      initialValue: true,
+    });
+    if (p.isCancel(cont) || !cont) {
+      p.cancel("install deskflow first, then re-run softkvm setup");
+      process.exit(0);
+    }
+  } else {
+    p.log.success(`deskflow-core found: ${deskflowPath}`);
+  }
 
   // discover servers and agents on the network
   const spinner = p.spinner();
@@ -337,6 +389,7 @@ async function main() {
     layout: direction && serverName
       ? { direction: direction as "left" | "right" | "up" | "down", neighborName: serverName }
       : undefined,
+    deskflowPath: deskflowPath ?? undefined,
   };
 
   const config = generateConfig(answers);

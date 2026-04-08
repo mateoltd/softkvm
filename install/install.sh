@@ -37,6 +37,7 @@ main() {
   fi
 
   install_m1ddc
+  install_deskflow
   register_path
   echo ""
   info "installed to ${INSTALL_DIR}"
@@ -222,6 +223,70 @@ install_m1ddc() {
   fi
 
   rm -rf "${m1ddc_dir}"
+  return 0
+}
+
+install_deskflow() {
+  # check if deskflow-core is already available
+  if command -v deskflow-core &>/dev/null; then
+    info "deskflow-core already installed"
+    return 0
+  fi
+
+  # check known install locations
+  local known_paths=""
+  case "${OS}" in
+    Darwin)
+      known_paths="/Applications/Deskflow.app/Contents/MacOS/deskflow-core"
+      ;;
+    Linux)
+      known_paths="/usr/bin/deskflow-core /usr/local/bin/deskflow-core"
+      ;;
+  esac
+  for p in ${known_paths}; do
+    if [ -f "${p}" ]; then
+      info "deskflow-core found at ${p}"
+      return 0
+    fi
+  done
+
+  info "installing deskflow (required for mouse/keyboard sharing)"
+
+  case "${OS}" in
+    Darwin)
+      if command -v brew &>/dev/null; then
+        if brew install --cask deskflow/tap/deskflow 2>/dev/null; then
+          info "deskflow installed via homebrew"
+          return 0
+        fi
+      fi
+      warn "could not install deskflow automatically"
+      echo "  install manually: brew install --cask deskflow/tap/deskflow"
+      echo "  or download from: https://github.com/deskflow/deskflow/releases"
+      ;;
+    Linux)
+      if command -v apt-get &>/dev/null; then
+        if sudo apt-get install -y deskflow 2>/dev/null; then
+          info "deskflow installed via apt"
+          return 0
+        fi
+      elif command -v dnf &>/dev/null; then
+        if sudo dnf install -y deskflow 2>/dev/null; then
+          info "deskflow installed via dnf"
+          return 0
+        fi
+      elif command -v pacman &>/dev/null; then
+        if sudo pacman -S --noconfirm deskflow 2>/dev/null; then
+          info "deskflow installed via pacman"
+          return 0
+        fi
+      fi
+      warn "could not install deskflow automatically"
+      echo "  install via your package manager or download from:"
+      echo "  https://github.com/deskflow/deskflow/releases"
+      ;;
+  esac
+
   return 0
 }
 

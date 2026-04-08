@@ -6,6 +6,7 @@ export interface SetupAnswers {
   serverAddress?: string;
   monitors: MonitorSetup[];
   layout?: LayoutSetup;
+  deskflowPath?: string;
 }
 
 export interface MonitorSetup {
@@ -30,6 +31,9 @@ export function generateConfig(answers: SetupAnswers): string {
 
   lines.push(`[deskflow]`);
   lines.push(`managed = true`);
+  if (answers.deskflowPath) {
+    lines.push(`binary_path = "${answers.deskflowPath}"`);
+  }
   lines.push(`switch_delay = 250`);
   lines.push(`clipboard_sharing = true`);
   lines.push(``);
