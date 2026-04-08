@@ -119,24 +119,31 @@ try_source_install() {
   info "cloning repository"
   git clone --depth 1 "${REPO_URL}" "${build_dir}" 2>/dev/null
 
+  local build_log="${build_dir}/build.log"
   info "building (release mode)"
-  cargo build --release --manifest-path "${build_dir}/Cargo.toml" \
+  if ! cargo build --release --manifest-path "${build_dir}/Cargo.toml" \
     --workspace \
-    --features softkvm-orchestrator/real-ddc,softkvm-cli/real-ddc 2>&1 | tail -1
+    --features softkvm-orchestrator/real-ddc,softkvm-cli/real-ddc >"${build_log}" 2>&1; then
+    echo ""
+    tail -10 "${build_log}"
+    echo ""
+    error "build failed"
+    return 1
+  fi
 
   info "copying binaries"
-  local copied=0
+  local missing=0
   for bin in softkvm softkvm-orchestrator softkvm-agent; do
     if [ -f "${build_dir}/target/release/${bin}" ]; then
       cp "${build_dir}/target/release/${bin}" "${INSTALL_DIR}/"
       chmod +x "${INSTALL_DIR}/${bin}"
-      copied=$((copied + 1))
     else
-      warn "binary not found: ${bin}"
+      error "binary not found: ${bin}"
+      missing=$((missing + 1))
     fi
   done
-  if [ "${copied}" -eq 0 ]; then
-    error "no binaries were produced by the build"
+  if [ "${missing}" -gt 0 ]; then
+    error "build incomplete: ${missing} binary(ies) missing"
     return 1
   fi
 
@@ -145,10 +152,15 @@ try_source_install() {
     local setup_dir="${build_dir}/setup"
     if [ -f "${setup_dir}/package.json" ]; then
       info "building setup wizard"
-      (cd "${setup_dir}" && bun install --silent 2>/dev/null && bun run build 2>/dev/null) || true
-      if [ -f "${setup_dir}/dist/softkvm-setup" ]; then
-        cp "${setup_dir}/dist/softkvm-setup" "${INSTALL_DIR}/"
-        chmod +x "${INSTALL_DIR}/softkvm-setup"
+      if (cd "${setup_dir}" && bun install --silent 2>/dev/null && bun run build 2>/dev/null); then
+        if [ -f "${setup_dir}/dist/softkvm-setup" ]; then
+          cp "${setup_dir}/dist/softkvm-setup" "${INSTALL_DIR}/"
+          chmod +x "${INSTALL_DIR}/softkvm-setup"
+        else
+          warn "setup wizard binary not produced"
+        fi
+      else
+        warn "setup wizard build failed (will use manual setup)"
       fi
     fi
   fi
@@ -211,9 +223,18 @@ run_post_install() {
     echo ""
   fi
 
-  # run interactive setup
+  # run interactive setup — stdin may be a pipe (curl | bash), so
+  # reattach the terminal for interactive prompts
   if [ -f "${INSTALL_DIR}/softkvm-setup" ]; then
-    "${INSTALL_DIR}/softkvm-setup"
+    if [ -e /dev/tty ]; then
+      "${INSTALL_DIR}/softkvm-setup" </dev/tty || {
+        warn "setup wizard exited unexpectedly"
+        show_manual_setup
+      }
+    else
+      warn "non-interactive environment, skipping setup wizard"
+      show_manual_setup
+    fi
   else
     show_manual_setup
   fi
