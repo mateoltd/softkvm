@@ -15,6 +15,7 @@ function Main {
     Write-Host ""
 
     $script:Target = Detect-Platform
+    if (-not $script:Target) { return }
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
     $installed = $false
@@ -42,11 +43,11 @@ function Main {
 }
 
 function Detect-Platform {
-    $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    $Arch = $env:PROCESSOR_ARCHITECTURE
     switch ($Arch) {
-        "X64"   { $t = "x86_64-pc-windows-msvc" }
-        "Arm64" { $t = "aarch64-pc-windows-msvc" }
-        default { Error "unsupported architecture: $Arch"; return }
+        "AMD64" { $t = "x86_64-pc-windows-msvc" }
+        "ARM64" { $t = "aarch64-pc-windows-msvc" }
+        default { Error "unsupported architecture: $Arch"; return $null }
     }
     Info "platform: $t"
     return $t
