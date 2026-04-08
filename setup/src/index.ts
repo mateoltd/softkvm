@@ -499,10 +499,9 @@ WantedBy=default.target
 }
 
 async function registerWindowsTask(name: string, binPath: string, configPath: string): Promise<boolean> {
-  // remove existing task if present
-  try { await $`schtasks /delete /tn ${name} /f`.quiet(); } catch {}
-
-  await $`schtasks /create /tn ${name} /tr "${binPath} --config ${configPath}" /sc onlogon /rl highest /f`.quiet();
+  // use HKCU Run key (no admin required, runs at user logon)
+  const cmd = `"${binPath}" --config "${configPath}"`;
+  await $`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d ${cmd} /f`.quiet();
   return true;
 }
 

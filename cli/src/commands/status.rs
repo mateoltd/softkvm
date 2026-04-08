@@ -1,13 +1,13 @@
 use anyhow::Result;
+use softkvm_core::config::find_config_file;
 use softkvm_core::ddc::DdcController;
 
 pub async fn run() -> Result<()> {
     println!("softkvm status\n");
 
     // check config
-    let config_path = find_config();
-    match &config_path {
-        Some(path) => match softkvm_core::config::Config::from_file(std::path::Path::new(path)) {
+    match find_config_file() {
+        Some(path) => match softkvm_core::config::Config::from_file(std::path::Path::new(&path)) {
             Ok(config) => {
                 let server = config
                     .topology()
@@ -71,31 +71,6 @@ pub async fn run() -> Result<()> {
     println!("              (IPC socket not yet implemented)");
 
     Ok(())
-}
-
-fn find_config() -> Option<String> {
-    // check current directory first
-    if std::path::Path::new("softkvm.toml").exists() {
-        return Some("softkvm.toml".into());
-    }
-
-    // check platform config dir
-    let home = std::env::var("HOME").ok()?;
-    let candidates = if cfg!(target_os = "macos") {
-        vec![format!(
-            "{home}/Library/Application Support/softkvm/softkvm.toml"
-        )]
-    } else if cfg!(target_os = "windows") {
-        let local = std::env::var("LOCALAPPDATA").ok()?;
-        vec![format!("{local}/softkvm/softkvm.toml")]
-    } else {
-        let xdg = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config"));
-        vec![format!("{xdg}/softkvm/softkvm.toml")]
-    };
-
-    candidates
-        .into_iter()
-        .find(|p| std::path::Path::new(p).exists())
 }
 
 #[cfg(feature = "real-ddc")]

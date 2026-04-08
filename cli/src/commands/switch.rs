@@ -58,39 +58,12 @@ pub async fn run(monitor_id: &str, input: &str) -> Result<()> {
 
 /// load input aliases from config if available, otherwise empty
 fn load_aliases() -> HashMap<String, u16> {
-    // try to find and load the config for aliases
-    let config_paths = [
-        dirs_for_config("softkvm.toml"),
-        Some("softkvm.toml".to_string()),
-    ];
-
-    for path in config_paths.into_iter().flatten() {
-        let p = std::path::Path::new(&path);
-        if p.exists() {
-            if let Ok(config) = softkvm_core::config::Config::from_file(p) {
-                return config.input_aliases;
-            }
+    if let Some(path) = softkvm_core::config::find_config_file() {
+        if let Ok(config) = softkvm_core::config::Config::from_file(std::path::Path::new(&path)) {
+            return config.input_aliases;
         }
     }
-
     HashMap::new()
-}
-
-/// platform-specific config directory
-fn dirs_for_config(filename: &str) -> Option<String> {
-    let home = std::env::var("HOME").ok()?;
-    if cfg!(target_os = "macos") {
-        Some(format!(
-            "{home}/Library/Application Support/softkvm/{filename}"
-        ))
-    } else if cfg!(target_os = "windows") {
-        std::env::var("LOCALAPPDATA")
-            .ok()
-            .map(|d| format!("{d}/softkvm/{filename}"))
-    } else {
-        let xdg = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config"));
-        Some(format!("{xdg}/softkvm/{filename}"))
-    }
 }
 
 #[cfg(feature = "real-ddc")]

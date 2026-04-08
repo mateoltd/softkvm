@@ -259,6 +259,33 @@ impl Config {
         Self::from_toml(&contents)
     }
 
+    /// Load config, searching platform-specific directories if the given
+    /// path doesn't exist. Returns the resolved path alongside the config.
+    pub fn load_or_find(path: &str) -> Result<(Self, String)> {
+        let p = std::path::Path::new(path);
+        if p.exists() {
+            let config = Self::from_file(p)?;
+            return Ok((config, path.to_string()));
+        }
+
+        // if the caller passed a custom path (not the default), don't search
+        if path != "softkvm.toml" {
+            return Err(SoftKvmError::Config(format!(
+                "config file not found: {path}"
+            )));
+        }
+
+        // search platform config directories
+        if let Some(found) = find_config_file() {
+            let config = Self::from_file(std::path::Path::new(&found))?;
+            Ok((config, found))
+        } else {
+            Err(SoftKvmError::Config(
+                "config file not found. run `softkvm setup` to create one".into(),
+            ))
+        }
+    }
+
     /// Validate referential integrity of the configuration.
     pub fn validate(&self) -> Result<()> {
         // Check exactly one server
@@ -332,6 +359,56 @@ impl Config {
             layout: self.layout.clone(),
         }
     }
+}
+
+/// Search platform-specific config directories for softkvm.toml.
+/// Checks current dir first, then OS-appropriate config paths.
+pub fn find_config_file() -> Option<String> {
+    // current directory
+    if std::path::Path::new("softkvm.toml").exists() {
+        return Some("softkvm.toml".into());
+    }
+
+    let candidates = platform_config_paths("softkvm.toml");
+    candidates
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+}
+
+/// Return platform-specific config directory paths for a given filename.
+pub fn platform_config_paths(filename: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            paths.push(format!(
+                "{home}/Library/Application Support/softkvm/{filename}"
+            ));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            paths.push(format!("{local}\\softkvm\\{filename}"));
+        }
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            paths.push(format!("{home}\\AppData\\Local\\softkvm\\{filename}"));
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            paths.push(format!("{xdg}/softkvm/{filename}"));
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            paths.push(format!("{home}/.config/softkvm/{filename}"));
+        }
+    }
+
+    paths
 }
 
 #[cfg(test)]
