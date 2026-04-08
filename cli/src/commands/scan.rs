@@ -53,6 +53,15 @@ pub async fn run(json: bool) -> Result<()> {
             );
         }
 
+        let unavailable_count = monitors.iter().filter(|m| !m.ddc_supported).count();
+        if unavailable_count > 0 && ddc_count > 0 {
+            println!(
+                "note: monitors showing another machine's input may not respond\n\
+                 to DDC/CI reads. switch them to this machine's input and re-scan\n\
+                 if a monitor appears as unavailable.\n"
+            );
+        }
+
         for (i, m) in monitors.iter().enumerate() {
             let input_str = match m.current_input_vcp {
                 Some(vcp) => {
