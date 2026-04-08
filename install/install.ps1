@@ -135,7 +135,11 @@ function Try-SourceInstall {
 function Build-SetupBinary {
     if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { return }
 
-    $scriptDir = Split-Path -Parent $MyInvocation.ScriptName
+    # when run via irm | iex, ScriptName is empty so we can't locate the setup dir
+    $scriptName = $MyInvocation.ScriptName
+    if ([string]::IsNullOrEmpty($scriptName)) { return }
+
+    $scriptDir = Split-Path -Parent $scriptName
     $setupDir = Join-Path (Split-Path -Parent $scriptDir) "setup"
     if (-not (Test-Path "$setupDir\package.json")) { return }
 
