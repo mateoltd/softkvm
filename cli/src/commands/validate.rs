@@ -7,14 +7,18 @@ pub fn run(config_path: &str) -> Result<()> {
         anyhow::bail!("config file not found: {config_path}");
     }
 
-    match full_kvm_core::config::Config::from_file(path) {
+    match softkvm_core::config::Config::from_file(path) {
         Ok(config) => {
             println!("configuration is valid");
             println!("  machines: {}", config.machines.len());
             println!("  monitors: {}", config.monitors.len());
             println!(
                 "  keyboard auto-remap: {}",
-                if config.keyboard.auto_remap { "enabled" } else { "disabled" }
+                if config.keyboard.auto_remap {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
             );
             println!(
                 "  shortcut translations: {}",

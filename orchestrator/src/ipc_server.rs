@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use full_kvm_core::protocol::{
-    DaemonState, JsonRpcRequest, JsonRpcResponse,
-};
+use softkvm_core::protocol::{DaemonState, JsonRpcRequest, JsonRpcResponse};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::{mpsc, RwLock};
@@ -11,10 +9,7 @@ use tokio::sync::{mpsc, RwLock};
 #[derive(Debug, Clone)]
 pub enum IpcCommand {
     SwitchMachine(String),
-    TestSwitch {
-        monitor_id: String,
-        input: String,
-    },
+    TestSwitch { monitor_id: String, input: String },
     SetFocusLock(bool),
     RescanMonitors,
 }
@@ -29,17 +24,14 @@ pub struct IpcState {
 /// default socket path per platform
 pub fn default_socket_path() -> String {
     if cfg!(target_os = "windows") {
-        r"\\.\pipe\FullKvmIpc".into()
+        r"\\.\pipe\SoftKvmIpc".into()
     } else {
-        "/tmp/full-kvm.sock".into()
+        "/tmp/softkvm.sock".into()
     }
 }
 
 /// run the IPC server on the given socket path
-pub async fn run_ipc_server(
-    socket_path: &str,
-    state: IpcState,
-) -> std::io::Result<()> {
+pub async fn run_ipc_server(socket_path: &str, state: IpcState) -> std::io::Result<()> {
     // remove stale socket
     let _ = std::fs::remove_file(socket_path);
 
@@ -57,10 +49,7 @@ pub async fn run_ipc_server(
     }
 }
 
-async fn handle_client(
-    stream: tokio::net::UnixStream,
-    state: IpcState,
-) -> anyhow::Result<()> {
+async fn handle_client(stream: tokio::net::UnixStream, state: IpcState) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
@@ -72,11 +61,7 @@ async fn handle_client(
 
         let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
             Ok(req) => dispatch(&req, &state).await,
-            Err(e) => JsonRpcResponse::error(
-                None,
-                -32700,
-                format!("parse error: {e}"),
-            ),
+            Err(e) => JsonRpcResponse::error(None, -32700, format!("parse error: {e}")),
         };
 
         let mut resp_json = serde_json::to_string(&response)?;
@@ -107,17 +92,18 @@ async fn dispatch(req: &JsonRpcRequest, state: &IpcState) -> JsonRpcResponse {
 
             match machine {
                 Some(name) => {
-                    let _ = state.cmd_tx.send(IpcCommand::SwitchMachine(name.clone())).await;
+                    let _ = state
+                        .cmd_tx
+                        .send(IpcCommand::SwitchMachine(name.clone()))
+                        .await;
                     JsonRpcResponse::success(
                         req.id.clone(),
                         serde_json::json!({"status": "ok", "machine": name}),
                     )
                 }
-                None => JsonRpcResponse::error(
-                    req.id.clone(),
-                    -32602,
-                    "missing params.machine".into(),
-                ),
+                None => {
+                    JsonRpcResponse::error(req.id.clone(), -32602, "missing params.machine".into())
+                }
             }
         }
         "test_switch" => {
@@ -172,19 +158,14 @@ async fn dispatch(req: &JsonRpcRequest, state: &IpcState) -> JsonRpcResponse {
                         serde_json::json!({"status": "ok", "focus_locked": val}),
                     )
                 }
-                None => JsonRpcResponse::error(
-                    req.id.clone(),
-                    -32602,
-                    "missing params.locked".into(),
-                ),
+                None => {
+                    JsonRpcResponse::error(req.id.clone(), -32602, "missing params.locked".into())
+                }
             }
         }
         "rescan_monitors" => {
             let _ = state.cmd_tx.send(IpcCommand::RescanMonitors).await;
-            JsonRpcResponse::success(
-                req.id.clone(),
-                serde_json::json!({"status": "ok"}),
-            )
+            JsonRpcResponse::success(req.id.clone(), serde_json::json!({"status": "ok"}))
         }
         _ => JsonRpcResponse::error(
             req.id.clone(),
@@ -209,11 +190,17 @@ mod tests {
             focus_locked: false,
             deskflow_status: "running".into(),
         }));
-        (IpcState { daemon_state, cmd_tx }, cmd_rx)
+        (
+            IpcState {
+                daemon_state,
+                cmd_tx,
+            },
+            cmd_rx,
+        )
     }
 
     fn temp_socket() -> String {
-        format!("/tmp/full-kvm-test-{}.sock", std::process::id())
+        format!("/tmp/softkvm-test-{}.sock", std::process::id())
     }
 
     async fn send_request(stream: &mut UnixStream, req: &str) -> String {
@@ -260,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipc_switch_machine() {
-        let socket = format!("/tmp/full-kvm-test-switch-{}.sock", std::process::id());
+        let socket = format!("/tmp/softkvm-test-switch-{}.sock", std::process::id());
         let (state, mut cmd_rx) = test_state();
 
         let sock = socket.clone();
@@ -289,7 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipc_set_focus_lock() {
-        let socket = format!("/tmp/full-kvm-test-lock-{}.sock", std::process::id());
+        let socket = format!("/tmp/softkvm-test-lock-{}.sock", std::process::id());
         let (state, mut cmd_rx) = test_state();
 
         let sock = socket.clone();
@@ -321,7 +308,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipc_invalid_method() {
-        let socket = format!("/tmp/full-kvm-test-invalid-{}.sock", std::process::id());
+        let socket = format!("/tmp/softkvm-test-invalid-{}.sock", std::process::id());
         let (state, _cmd_rx) = test_state();
 
         let sock = socket.clone();
@@ -347,7 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipc_malformed_json() {
-        let socket = format!("/tmp/full-kvm-test-malformed-{}.sock", std::process::id());
+        let socket = format!("/tmp/softkvm-test-malformed-{}.sock", std::process::id());
         let (state, _cmd_rx) = test_state();
 
         let sock = socket.clone();
@@ -369,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipc_multiple_clients() {
-        let socket = format!("/tmp/full-kvm-test-multi-{}.sock", std::process::id());
+        let socket = format!("/tmp/softkvm-test-multi-{}.sock", std::process::id());
         let (state, _cmd_rx) = test_state();
 
         let sock = socket.clone();

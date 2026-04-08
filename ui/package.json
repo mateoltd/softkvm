@@ -1,9 +1,9 @@
 {
-  "name": "full-kvm-ui",
+  "name": "softkvm-ui",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "full-kvm control panel",
+  "description": "softkvm control panel",
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "vite",

@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 mod commands;
 
 #[derive(Parser)]
-#[command(name = "full-kvm", about = "full-kvm command line interface")]
+#[command(name = "softkvm", about = "softkvm command line interface")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -29,7 +29,7 @@ enum Commands {
     #[command(name = "validate")]
     ValidateConfig {
         /// path to config file
-        #[arg(short, long, default_value = "full-kvm.toml")]
+        #[arg(short, long, default_value = "softkvm.toml")]
         config: String,
     },
     /// show current system status

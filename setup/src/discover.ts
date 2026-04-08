@@ -1,7 +1,7 @@
 import { createSocket } from "dgram";
 
 const DISCOVERY_PORT = 24802;
-const DISCOVERY_MAGIC = "FULLKVM_DISCOVER";
+const DISCOVERY_MAGIC = "SOFTKVM_DISCOVER";
 const DISCOVERY_TIMEOUT_MS = 2000;
 
 export interface ServerInfo {
@@ -11,7 +11,7 @@ export interface ServerInfo {
   port: number;
 }
 
-// scan the local network for running full-kvm servers
+// scan the local network for running softkvm servers
 export async function discoverServers(): Promise<ServerInfo[]> {
   return new Promise((resolve) => {
     const servers: ServerInfo[] = [];
@@ -20,7 +20,7 @@ export async function discoverServers(): Promise<ServerInfo[]> {
     socket.on("message", (msg) => {
       const text = msg.toString();
       const parts = text.split(":");
-      if (parts.length === 5 && parts[0] === "FULLKVM_HERE") {
+      if (parts.length === 5 && parts[0] === "SOFTKVM_HERE") {
         servers.push({
           name: parts[1],
           version: parts[2],

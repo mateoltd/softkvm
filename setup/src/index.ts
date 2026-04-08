@@ -16,20 +16,20 @@ function detectOs(): "windows" | "macos" | "linux" {
 function configDir(): string {
   const os = detectOs();
   if (os === "macos") {
-    return join(process.env.HOME ?? "~", "Library", "Application Support", "full-kvm");
+    return join(process.env.HOME ?? "~", "Library", "Application Support", "softkvm");
   }
   if (os === "windows") {
-    return join(process.env.LOCALAPPDATA ?? join(process.env.HOME ?? "~", "AppData", "Local"), "full-kvm");
+    return join(process.env.LOCALAPPDATA ?? join(process.env.HOME ?? "~", "AppData", "Local"), "softkvm");
   }
-  return join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "~", ".config"), "full-kvm");
+  return join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "~", ".config"), "softkvm");
 }
 
 async function main() {
-  p.intro("full-kvm setup");
+  p.intro("softkvm setup");
 
   // discover servers
   const spinner = p.spinner();
-  spinner.start("scanning network for existing full-kvm servers");
+  spinner.start("scanning network for existing softkvm servers");
   const servers = await discoverServers();
   spinner.stop(
     servers.length > 0
@@ -210,7 +210,7 @@ async function main() {
 
   const config = generateConfig(answers);
   const dir = configDir();
-  const configPath = join(dir, "full-kvm.toml");
+  const configPath = join(dir, "softkvm.toml");
 
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -223,11 +223,11 @@ async function main() {
   p.note(
     [
       role === "orchestrator"
-        ? "start the server: full-kvm-orchestrator --config " + configPath
-        : "start the agent: full-kvm-agent --config " + configPath,
+        ? "start the server: softkvm-orchestrator --config " + configPath
+        : "start the agent: softkvm-agent --config " + configPath,
       "",
-      "run `full-kvm status` to check health",
-      "run `full-kvm scan` to list detected monitors",
+      "run `softkvm status` to check health",
+      "run `softkvm scan` to list detected monitors",
     ].join("\n"),
     "next steps"
   );

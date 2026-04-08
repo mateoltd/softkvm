@@ -1,4 +1,4 @@
-use full_kvm_core::keymap::{
+use softkvm_core::keymap::{
     build_translation_rules, find_translation, KeyCombo, Modifier, OsType, ShortcutTranslation,
     TranslationRule,
 };
@@ -36,11 +36,7 @@ pub struct InterceptorState {
 }
 
 impl InterceptorState {
-    pub fn new(
-        local_os: OsType,
-        translations: Vec<ShortcutTranslation>,
-        enabled: bool,
-    ) -> Self {
+    pub fn new(local_os: OsType, translations: Vec<ShortcutTranslation>, enabled: bool) -> Self {
         Self {
             local_os,
             remote_os: None,
@@ -78,11 +74,7 @@ pub struct KeyInterceptor {
 
 impl KeyInterceptor {
     /// create a new key interceptor for the given local OS and translations
-    pub fn new(
-        local_os: OsType,
-        translations: Vec<ShortcutTranslation>,
-        enabled: bool,
-    ) -> Self {
+    pub fn new(local_os: OsType, translations: Vec<ShortcutTranslation>, enabled: bool) -> Self {
         let state = Arc::new(Mutex::new(InterceptorState::new(
             local_os,
             translations,
@@ -295,7 +287,9 @@ fn run_macos_hook(
             Some(event)
         },
     )
-    .map_err(|_| anyhow::anyhow!("failed to create CGEventTap -- check Accessibility permissions"))?;
+    .map_err(|_| {
+        anyhow::anyhow!("failed to create CGEventTap -- check Accessibility permissions")
+    })?;
 
     let source = tap.mach_port_source();
     let run_loop = CFRunLoop::get_current();
@@ -322,7 +316,7 @@ fn synthesize_combo_macos(_combo: &KeyCombo) -> Option<core_graphics::event::CGE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use full_kvm_core::keymap::default_translations;
+    use softkvm_core::keymap::default_translations;
 
     #[test]
     fn test_interceptor_state_no_remote() {
@@ -399,11 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_key_interceptor_lifecycle() {
-        let interceptor = KeyInterceptor::new(
-            OsType::MacOS,
-            default_translations(),
-            true,
-        );
+        let interceptor = KeyInterceptor::new(OsType::MacOS, default_translations(), true);
 
         // start in stub mode on linux
         assert!(interceptor.start().is_ok());

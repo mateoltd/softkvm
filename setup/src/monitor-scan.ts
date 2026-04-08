@@ -9,13 +9,13 @@ export interface MonitorInfo {
   ddcSupported: boolean;
 }
 
-// scan for monitors by shelling out to full-kvm scan --json
+// scan for monitors by shelling out to softkvm scan --json
 export async function scanMonitors(): Promise<MonitorInfo[]> {
   try {
-    const result = await $`full-kvm scan --json`.text();
+    const result = await $`softkvm scan --json`.text();
     return JSON.parse(result);
   } catch {
-    // full-kvm binary not available yet or no monitors found
+    // softkvm binary not available yet or no monitors found
     return [];
   }
 }

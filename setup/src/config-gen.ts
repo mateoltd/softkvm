@@ -21,7 +21,7 @@ export interface LayoutSetup {
   neighborName: string;
 }
 
-// generate a full-kvm.toml configuration from the setup answers
+// generate a softkvm.toml configuration from the setup answers
 export function generateConfig(answers: SetupAnswers): string {
   const lines: string[] = [];
 

@@ -1,66 +1,195 @@
 $ErrorActionPreference = "Stop"
 
-$Repo = "mateoltd/full-kvm"
-$InstallDir = "$env:LOCALAPPDATA\full-kvm\bin"
+$Repo = "mateoltd/softkvm"
+$InstallDir = "$env:LOCALAPPDATA\softkvm\bin"
+$RepoUrl = "https://github.com/$Repo.git"
+
+function Info($msg)  { Write-Host "▸ $msg" -ForegroundColor Green }
+function Warn($msg)  { Write-Host "▸ $msg" -ForegroundColor Yellow }
+function Error($msg) { Write-Host "▸ $msg" -ForegroundColor Red }
 
 function Main {
-    Write-Host "full-kvm installer"
+    Write-Host ""
+    Write-Host "softkvm installer" -NoNewline
+    Write-Host ""
     Write-Host ""
 
-    # detect architecture
-    $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    switch ($Arch) {
-        "X64"   { $Target = "x86_64-pc-windows-msvc" }
-        "Arm64" { $Target = "aarch64-pc-windows-msvc" }
-        default { Write-Error "unsupported architecture: $Arch"; exit 1 }
-    }
-
-    Write-Host "detected: $Target"
-
-    # get latest release
-    $Release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
-    $Latest = $Release.tag_name
-    Write-Host "latest version: $Latest"
-
-    # check if already installed
-    if (Test-Path "$InstallDir\full-kvm.exe") {
-        $Current = & "$InstallDir\full-kvm.exe" --version 2>$null
-        if ($Current -match $Latest.TrimStart("v")) {
-            Write-Host "already up to date ($Latest)"
-            Run-Setup
-            return
-        }
-        Write-Host "updating from $Current to $Latest"
-    }
-
-    # download and extract
-    $Url = "https://github.com/$Repo/releases/download/$Latest/full-kvm-$Latest-$Target.zip"
-    Write-Host "downloading $Url"
-
+    $script:Target = Detect-Platform
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    $TempZip = "$env:TEMP\full-kvm.zip"
-    Invoke-WebRequest -Uri $Url -OutFile $TempZip
-    Expand-Archive -Path $TempZip -DestinationPath $InstallDir -Force
-    Remove-Item $TempZip
 
-    # add to PATH
-    $CurrentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-    if ($CurrentPath -notlike "*full-kvm*") {
-        [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$CurrentPath", "User")
-        Write-Host "added $InstallDir to user PATH"
+    $installed = $false
+    if (Try-ReleaseInstall) {
+        Info "installed from release"
+        $installed = $true
     }
-    $env:PATH = "$InstallDir;$env:PATH"
+    elseif (Try-SourceInstall) {
+        Info "built from source"
+        $installed = $true
+    }
 
-    Write-Host "installed to $InstallDir"
-    Run-Setup
+    if (-not $installed) {
+        Error "installation failed"
+        Write-Host ""
+        Write-Host "  manual install: https://github.com/$Repo#build-from-source"
+        exit 1
+    }
+
+    Register-Path
+    Build-SetupBinary
+    Write-Host ""
+    Info "installed to $InstallDir"
+    Run-PostInstall
 }
 
-function Run-Setup {
-    $SetupBin = "$InstallDir\full-kvm-setup.exe"
-    if (Test-Path $SetupBin) {
-        Write-Host ""
-        & $SetupBin
+function Detect-Platform {
+    $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    switch ($Arch) {
+        "X64"   { $t = "x86_64-pc-windows-msvc" }
+        "Arm64" { $t = "aarch64-pc-windows-msvc" }
+        default { Error "unsupported architecture: $Arch"; exit 1 }
     }
+    Info "platform: $t"
+    return $t
+}
+
+function Try-ReleaseInstall {
+    try {
+        $release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest" -ErrorAction Stop
+        $latest = $release.tag_name
+
+        # check if already at this version
+        if (Test-Path "$InstallDir\softkvm.exe") {
+            $current = & "$InstallDir\softkvm.exe" --version 2>$null
+            if ($current -match $latest.TrimStart("v")) {
+                Info "already up to date ($latest)"
+                return $true
+            }
+        }
+
+        $url = "https://github.com/$Repo/releases/download/$latest/softkvm-$latest-$script:Target.zip"
+        Info "downloading $latest for $script:Target"
+
+        $tempZip = "$env:TEMP\softkvm-$([guid]::NewGuid().ToString('N').Substring(0,8)).zip"
+        Invoke-WebRequest -Uri $url -OutFile $tempZip -ErrorAction Stop
+        Expand-Archive -Path $tempZip -DestinationPath $InstallDir -Force
+        Remove-Item $tempZip -ErrorAction SilentlyContinue
+        return $true
+    }
+    catch {
+        Warn "no releases found, falling back to source build"
+        return $false
+    }
+}
+
+function Try-SourceInstall {
+    # need git + cargo
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Error "git is required to build from source"
+        return $false
+    }
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        Warn "rust not found"
+        Write-Host "  install from: https://rustup.rs"
+        return $false
+    }
+
+    $buildDir = Join-Path $env:TEMP "softkvm-build-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+
+    try {
+        Info "cloning repository"
+        git clone --depth 1 $RepoUrl $buildDir 2>$null
+
+        Info "building (release mode)"
+        cargo build --release --manifest-path "$buildDir\Cargo.toml" `
+            --features real-ddc --no-default-features 2>&1 | Select-Object -Last 1
+
+        Info "copying binaries"
+        foreach ($bin in @("softkvm", "softkvm-orchestrator", "softkvm-agent")) {
+            $src = "$buildDir\target\release\$bin.exe"
+            if (Test-Path $src) {
+                Copy-Item $src "$InstallDir\$bin.exe" -Force
+            }
+        }
+        return $true
+    }
+    catch {
+        Error "source build failed: $_"
+        return $false
+    }
+    finally {
+        if (Test-Path $buildDir) {
+            Remove-Item $buildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Build-SetupBinary {
+    if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { return }
+
+    $scriptDir = Split-Path -Parent $MyInvocation.ScriptName
+    $setupDir = Join-Path (Split-Path -Parent $scriptDir) "setup"
+    if (-not (Test-Path "$setupDir\package.json")) { return }
+
+    Info "building setup wizard"
+    try {
+        Push-Location $setupDir
+        bun install --silent 2>$null
+        bun run build 2>$null
+        $setupBin = "$setupDir\dist\softkvm-setup.exe"
+        if (Test-Path $setupBin) {
+            Copy-Item $setupBin "$InstallDir\softkvm-setup.exe" -Force
+        }
+    }
+    catch { }
+    finally { Pop-Location }
+}
+
+function Register-Path {
+    $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($currentPath -notlike "*softkvm*") {
+        [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$currentPath", "User")
+        Info "added to user PATH"
+    }
+    $env:PATH = "$InstallDir;$env:PATH"
+}
+
+function Run-PostInstall {
+    Write-Host ""
+    Write-Host "scanning monitors" -ForegroundColor White
+    Write-Host ""
+
+    # detect monitors
+    try {
+        & "$InstallDir\softkvm.exe" scan 2>$null
+        Write-Host ""
+    }
+    catch {
+        Warn "no DDC/CI monitors detected (can be configured manually)"
+        Write-Host ""
+    }
+
+    # run interactive setup
+    $setupBin = "$InstallDir\softkvm-setup.exe"
+    if (Test-Path $setupBin) {
+        & $setupBin
+    }
+    else {
+        Show-ManualSetup
+    }
+}
+
+function Show-ManualSetup {
+    Write-Host "next steps" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  1. create a config file:"
+    Write-Host "     softkvm setup          (interactive, requires bun)"
+    Write-Host "     softkvm validate       (check an existing config)"
+    Write-Host ""
+    Write-Host "  2. start the daemon:"
+    Write-Host "     softkvm-orchestrator   (on the primary machine)"
+    Write-Host "     softkvm-agent          (on each secondary machine)"
+    Write-Host ""
+    Write-Host "  docs: https://github.com/$Repo#quick-start"
 }
 
 Main

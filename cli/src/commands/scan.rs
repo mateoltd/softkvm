@@ -1,11 +1,13 @@
 use anyhow::Result;
-use full_kvm_core::ddc::DdcController;
-use full_kvm_core::input_source::InputSource;
+use softkvm_core::ddc::DdcController;
+use softkvm_core::input_source::InputSource;
 
 pub async fn run(json: bool) -> Result<()> {
     let controller = create_controller();
 
-    let monitors = controller.enumerate_monitors().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let monitors = controller
+        .enumerate_monitors()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if json {
         let json_monitors: Vec<serde_json::Value> = monitors
@@ -40,10 +42,7 @@ pub async fn run(json: bool) -> Result<()> {
             return Ok(());
         }
 
-        println!(
-            "found {} monitor(s) with DDC/CI support:\n",
-            monitors.len()
-        );
+        println!("found {} monitor(s) with DDC/CI support:\n", monitors.len());
 
         for m in &monitors {
             let input_str = match m.current_input_vcp {
@@ -54,7 +53,11 @@ pub async fn run(json: bool) -> Result<()> {
                 None => "unknown".to_string(),
             };
 
-            let ddc_status = if m.ddc_supported { "healthy" } else { "unavailable" };
+            let ddc_status = if m.ddc_supported {
+                "healthy"
+            } else {
+                "unavailable"
+            };
 
             println!("  {} {}", m.name, m.id);
             println!("    manufacturer:  {}", m.manufacturer);
@@ -71,26 +74,32 @@ pub async fn run(json: bool) -> Result<()> {
 
 #[cfg(feature = "stub-ddc")]
 fn create_controller() -> Box<dyn DdcController> {
-    Box::new(full_kvm_core::ddc::stub::StubDdcController::new())
+    Box::new(softkvm_core::ddc::stub::StubDdcController::new())
 }
 
 #[cfg(all(not(feature = "stub-ddc"), feature = "real-ddc"))]
 fn create_controller() -> Box<dyn DdcController> {
-    Box::new(full_kvm_core::ddc::real::RealDdcController::new())
+    Box::new(softkvm_core::ddc::real::RealDdcController::new())
 }
 
 #[cfg(all(not(feature = "stub-ddc"), not(feature = "real-ddc")))]
 fn create_controller() -> Box<dyn DdcController> {
     struct NullController;
     impl DdcController for NullController {
-        fn enumerate_monitors(&self) -> full_kvm_core::error::Result<Vec<full_kvm_core::protocol::MonitorInfo>> {
+        fn enumerate_monitors(
+            &self,
+        ) -> softkvm_core::error::Result<Vec<softkvm_core::protocol::MonitorInfo>> {
             Ok(vec![])
         }
-        fn get_input_source(&self, id: &str) -> full_kvm_core::error::Result<u16> {
-            Err(full_kvm_core::error::FullKvmError::Ddc(format!("no DDC backend available for {id}")))
+        fn get_input_source(&self, id: &str) -> softkvm_core::error::Result<u16> {
+            Err(softkvm_core::error::SoftKvmError::Ddc(format!(
+                "no DDC backend available for {id}"
+            )))
         }
-        fn set_input_source(&self, id: &str, _value: u16) -> full_kvm_core::error::Result<()> {
-            Err(full_kvm_core::error::FullKvmError::Ddc(format!("no DDC backend available for {id}")))
+        fn set_input_source(&self, id: &str, _value: u16) -> softkvm_core::error::Result<()> {
+            Err(softkvm_core::error::SoftKvmError::Ddc(format!(
+                "no DDC backend available for {id}"
+            )))
         }
     }
     Box::new(NullController)

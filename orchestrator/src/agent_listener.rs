@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use full_kvm_core::protocol::{
-    self, Message, MonitorInfo, PROTOCOL_VERSION,
-};
-use tokio::io::{BufReader};
+use softkvm_core::protocol::{self, Message, MonitorInfo, PROTOCOL_VERSION};
+use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
@@ -101,10 +99,7 @@ impl AgentManager {
 }
 
 /// start listening for agent connections
-pub async fn run_agent_listener(
-    listen_addr: &str,
-    manager: AgentManager,
-) -> std::io::Result<()> {
+pub async fn run_agent_listener(listen_addr: &str, manager: AgentManager) -> std::io::Result<()> {
     let listener = TcpListener::bind(listen_addr).await?;
     tracing::info!(addr = listen_addr, "agent listener started");
 
@@ -121,10 +116,7 @@ pub async fn run_agent_listener(
     }
 }
 
-async fn handle_agent(
-    stream: TcpStream,
-    manager: AgentManager,
-) -> anyhow::Result<()> {
+async fn handle_agent(stream: TcpStream, manager: AgentManager) -> anyhow::Result<()> {
     let (reader, writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
 
@@ -172,7 +164,10 @@ async fn handle_agent(
         .write()
         .await
         .insert(agent_name.clone(), agent_info.clone());
-    let _ = manager.event_tx.send(AgentEvent::Connected(agent_name.clone())).await;
+    let _ = manager
+        .event_tx
+        .send(AgentEvent::Connected(agent_name.clone()))
+        .await;
 
     // message loop
     let result = agent_message_loop(&mut reader, &agent_info, &manager).await;
@@ -266,7 +261,7 @@ pub async fn check_heartbeats(manager: &AgentManager, timeout: Duration) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use full_kvm_core::protocol::{self, Message, MonitorInfo, PROTOCOL_VERSION};
+    use softkvm_core::protocol::{self, Message, MonitorInfo, PROTOCOL_VERSION};
     use tokio::net::TcpStream;
 
     /// helper: start listener on ephemeral port, return address + manager + event rx
@@ -480,7 +475,9 @@ mod tests {
         // send heartbeat
         protocol::write_message(
             &mut writer,
-            &Message::Heartbeat { timestamp_ms: 12345 },
+            &Message::Heartbeat {
+                timestamp_ms: 12345,
+            },
         )
         .await
         .unwrap();

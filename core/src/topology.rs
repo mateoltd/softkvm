@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::keymap::OsType;
 
-/// Role a machine plays in the full-kvm network.
+/// Role a machine plays in the softkvm network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MachineRole {
@@ -72,7 +72,10 @@ impl Topology {
 
     /// Find all monitors that need switching when transitioning to a target machine.
     /// Returns (monitor_config, target_input_source_string) pairs.
-    pub fn monitors_for_transition<'a>(&'a self, target_machine: &str) -> Vec<(&'a MonitorConfig, &'a str)> {
+    pub fn monitors_for_transition<'a>(
+        &'a self,
+        target_machine: &str,
+    ) -> Vec<(&'a MonitorConfig, &'a str)> {
         self.monitors
             .iter()
             .filter_map(|mon| {

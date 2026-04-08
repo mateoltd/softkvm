@@ -1,6 +1,6 @@
-use full_kvm_core::config::Config;
-use full_kvm_core::keymap::deskflow_modifier_mapping;
-use full_kvm_core::topology::MachineRole;
+use softkvm_core::config::Config;
+use softkvm_core::keymap::deskflow_modifier_mapping;
+use softkvm_core::topology::MachineRole;
 use std::fmt::Write;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -55,11 +55,21 @@ pub fn generate_deskflow_config(config: &Config) -> String {
     writeln!(out, "section: options").unwrap();
     writeln!(out, "\tswitchDelay = {}", config.deskflow.switch_delay).unwrap();
     if config.deskflow.switch_double_tap > 0 {
-        writeln!(out, "\tswitchDoubleTap = {}", config.deskflow.switch_double_tap).unwrap();
+        writeln!(
+            out,
+            "\tswitchDoubleTap = {}",
+            config.deskflow.switch_double_tap
+        )
+        .unwrap();
     }
     if config.deskflow.clipboard_sharing {
         writeln!(out, "\tclipboardSharing = true").unwrap();
-        writeln!(out, "\tclipboardSharingSize = {}", config.deskflow.clipboard_max_size_kb).unwrap();
+        writeln!(
+            out,
+            "\tclipboardSharingSize = {}",
+            config.deskflow.clipboard_max_size_kb
+        )
+        .unwrap();
     } else {
         writeln!(out, "\tclipboardSharing = false").unwrap();
     }
@@ -71,7 +81,7 @@ pub fn generate_deskflow_config(config: &Config) -> String {
 /// write the generated deskflow config to a temp file and return the path
 pub fn write_deskflow_config(config: &Config) -> std::io::Result<PathBuf> {
     let conf_content = generate_deskflow_config(config);
-    let dir = std::env::temp_dir().join("full-kvm");
+    let dir = std::env::temp_dir().join("softkvm");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("deskflow.conf");
     std::fs::write(&path, &conf_content)?;
@@ -88,9 +98,7 @@ pub struct DeskflowProcess {
 impl DeskflowProcess {
     /// spawn deskflow-core server with stdout/stderr captured
     /// returns the process handle and a receiver for stdout lines
-    pub async fn spawn(
-        config: &Config,
-    ) -> anyhow::Result<(Self, mpsc::Receiver<String>)> {
+    pub async fn spawn(config: &Config) -> anyhow::Result<(Self, mpsc::Receiver<String>)> {
         let config_path = write_deskflow_config(config)?;
         let binary = &config.deskflow.binary_path;
 
@@ -138,13 +146,7 @@ impl DeskflowProcess {
             }
         });
 
-        Ok((
-            Self {
-                child,
-                config_path,
-            },
-            rx,
-        ))
+        Ok((Self { child, config_path }, rx))
     }
 
     /// wait for the process to exit and return the exit status

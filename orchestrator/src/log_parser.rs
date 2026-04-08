@@ -32,7 +32,8 @@ mod tests {
 
     #[test]
     fn test_parse_transition() {
-        let line = r#"[2024-03-15T10:30:00] INFO: switch from "Windows-PC" to "MacBook" at 1920,540"#;
+        let line =
+            r#"[2024-03-15T10:30:00] INFO: switch from "Windows-PC" to "MacBook" at 1920,540"#;
         let event = parse_line(line).unwrap();
         assert_eq!(event.source, "Windows-PC");
         assert_eq!(event.target, "MacBook");

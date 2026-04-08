@@ -1,20 +1,20 @@
 [package]
-name = "full-kvm-cli"
+name = "softkvm-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "full-kvm"
+name = "softkvm"
 path = "src/main.rs"
 
 [features]
 default = ["stub-ddc"]
-stub-ddc = ["full-kvm-core/stub-ddc"]
-real-ddc = ["full-kvm-core/real-ddc"]
+stub-ddc = ["softkvm-core/stub-ddc"]
+real-ddc = ["softkvm-core/real-ddc"]
 
 [dependencies]
-full-kvm-core = { workspace = true }
+softkvm-core = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -91,18 +91,15 @@ pub fn default_translations() -> Vec<ShortcutTranslation> {
 
 /// Deskflow modifier mapping for a given OS pair
 /// returns (modifier_name, mapped_to) pairs for the Deskflow config
-pub fn deskflow_modifier_mapping(server_os: OsType, client_os: OsType) -> Vec<(&'static str, &'static str)> {
+pub fn deskflow_modifier_mapping(
+    server_os: OsType,
+    client_os: OsType,
+) -> Vec<(&'static str, &'static str)> {
     match (server_os, client_os) {
         // Mac server, Windows client: Mac keyboard controlling Windows
-        (OsType::MacOS, OsType::Windows) => vec![
-            ("meta", "ctrl"),
-            ("ctrl", "super"),
-        ],
+        (OsType::MacOS, OsType::Windows) => vec![("meta", "ctrl"), ("ctrl", "super")],
         // Windows server, Mac client: Windows keyboard controlling Mac
-        (OsType::Windows, OsType::MacOS) => vec![
-            ("ctrl", "meta"),
-            ("super", "ctrl"),
-        ],
+        (OsType::Windows, OsType::MacOS) => vec![("ctrl", "meta"), ("super", "ctrl")],
         _ => vec![],
     }
 }
@@ -115,8 +112,8 @@ pub enum Modifier {
     Ctrl,
     Alt,
     Shift,
-    Meta,   // Cmd on Mac, Win on Windows
-    Super,  // same as Meta in most contexts
+    Meta,  // Cmd on Mac, Win on Windows
+    Super, // same as Meta in most contexts
 }
 
 /// a parsed key combo (e.g., "meta+tab" -> KeyCombo { modifiers: [Meta], key: "tab" })
@@ -206,7 +203,11 @@ pub fn find_translation<'a>(
     rules.iter().find(|rule| {
         rule.from.key.eq_ignore_ascii_case(&combo.key)
             && rule.from.modifiers.len() == combo.modifiers.len()
-            && rule.from.modifiers.iter().all(|m| combo.modifiers.contains(m))
+            && rule
+                .from
+                .modifiers
+                .iter()
+                .all(|m| combo.modifiers.contains(m))
     })
 }
 
@@ -224,10 +225,10 @@ pub fn modifiers_from_vk_state(modifier_states: &[(u32, bool)]) -> Vec<Modifier>
             continue;
         }
         match vk {
-            0xA2 | 0xA3 => mods.push(Modifier::Ctrl),  // VK_LCONTROL, VK_RCONTROL
-            0xA4 | 0xA5 => mods.push(Modifier::Alt),    // VK_LMENU, VK_RMENU
-            0xA0 | 0xA1 => mods.push(Modifier::Shift),  // VK_LSHIFT, VK_RSHIFT
-            0x5B | 0x5C => mods.push(Modifier::Meta),    // VK_LWIN, VK_RWIN
+            0xA2 | 0xA3 => mods.push(Modifier::Ctrl), // VK_LCONTROL, VK_RCONTROL
+            0xA4 | 0xA5 => mods.push(Modifier::Alt),  // VK_LMENU, VK_RMENU
+            0xA0 | 0xA1 => mods.push(Modifier::Shift), // VK_LSHIFT, VK_RSHIFT
+            0x5B | 0x5C => mods.push(Modifier::Meta), // VK_LWIN, VK_RWIN
             _ => {}
         }
     }
@@ -276,9 +277,9 @@ pub fn combo_from_vk(vk_code: u32, modifier_states: &[(u32, bool)]) -> Option<Ke
 /// map a Modifier to its Windows VK code (left variant)
 pub fn modifier_to_vk(m: &Modifier) -> u32 {
     match m {
-        Modifier::Ctrl => 0xA2,   // VK_LCONTROL
-        Modifier::Alt => 0xA4,    // VK_LMENU
-        Modifier::Shift => 0xA0,  // VK_LSHIFT
+        Modifier::Ctrl => 0xA2,                   // VK_LCONTROL
+        Modifier::Alt => 0xA4,                    // VK_LMENU
+        Modifier::Shift => 0xA0,                  // VK_LSHIFT
         Modifier::Meta | Modifier::Super => 0x5B, // VK_LWIN
     }
 }
@@ -324,10 +325,18 @@ pub fn key_name_to_vk(name: &str) -> Option<u32> {
 /// extract Modifier list from a macOS CGEventFlags bitmask
 pub fn modifiers_from_cg_flags(flags: u64) -> Vec<Modifier> {
     let mut mods = Vec::new();
-    if flags & 0x00100000 != 0 { mods.push(Modifier::Meta); }   // kCGEventFlagMaskCommand
-    if flags & 0x00040000 != 0 { mods.push(Modifier::Ctrl); }   // kCGEventFlagMaskControl
-    if flags & 0x00080000 != 0 { mods.push(Modifier::Alt); }    // kCGEventFlagMaskAlternate
-    if flags & 0x00020000 != 0 { mods.push(Modifier::Shift); }  // kCGEventFlagMaskShift
+    if flags & 0x00100000 != 0 {
+        mods.push(Modifier::Meta);
+    } // kCGEventFlagMaskCommand
+    if flags & 0x00040000 != 0 {
+        mods.push(Modifier::Ctrl);
+    } // kCGEventFlagMaskControl
+    if flags & 0x00080000 != 0 {
+        mods.push(Modifier::Alt);
+    } // kCGEventFlagMaskAlternate
+    if flags & 0x00020000 != 0 {
+        mods.push(Modifier::Shift);
+    } // kCGEventFlagMaskShift
     mods
 }
 
@@ -617,12 +626,7 @@ mod tests {
 
     #[test]
     fn test_modifiers_from_vk_state_empty() {
-        let states = vec![
-            (0xA2, false),
-            (0xA4, false),
-            (0xA0, false),
-            (0x5B, false),
-        ];
+        let states = vec![(0xA2, false), (0xA4, false), (0xA0, false), (0x5B, false)];
         let mods = modifiers_from_vk_state(&states);
         assert!(mods.is_empty());
     }
@@ -666,7 +670,11 @@ mod tests {
         for name in &["tab", "space", "a", "z", "0", "9", "F1", "F12"] {
             let vk = key_name_to_vk(name).unwrap();
             let back = key_name_from_vk(vk).unwrap();
-            assert_eq!(back.to_lowercase(), name.to_lowercase(), "roundtrip failed for {name}");
+            assert_eq!(
+                back.to_lowercase(),
+                name.to_lowercase(),
+                "roundtrip failed for {name}"
+            );
         }
     }
 
@@ -712,7 +720,11 @@ mod tests {
         for name in &["tab", "space", "q", "a", "s", "0", "4", "F1", "F4"] {
             let kc = key_name_to_cg_keycode(name).unwrap();
             let back = key_name_from_cg_keycode(kc).unwrap();
-            assert_eq!(back.to_lowercase(), name.to_lowercase(), "CG roundtrip failed for {name}");
+            assert_eq!(
+                back.to_lowercase(),
+                name.to_lowercase(),
+                "CG roundtrip failed for {name}"
+            );
         }
     }
 

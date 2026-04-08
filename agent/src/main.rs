@@ -1,17 +1,17 @@
 use anyhow::Result;
 use clap::Parser;
-use full_kvm_core::config::Config;
-use full_kvm_core::ddc::DdcController;
-use full_kvm_core::protocol::Message;
-use full_kvm_core::topology::MachineRole;
+use softkvm_core::config::Config;
+use softkvm_core::ddc::DdcController;
+use softkvm_core::protocol::Message;
+use softkvm_core::topology::MachineRole;
 
 mod connection;
 
 #[derive(Parser)]
-#[command(name = "full-kvm-agent", about = "full-kvm client agent daemon")]
+#[command(name = "softkvm-agent", about = "softkvm client agent daemon")]
 struct Cli {
     /// path to config file
-    #[arg(short, long, default_value = "full-kvm.toml")]
+    #[arg(short, long, default_value = "softkvm.toml")]
     config: String,
 
     /// orchestrator address (overrides config)
@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
     tracing::info!(
         agent = agent_name,
         server = server_addr,
-        "full-kvm agent starting"
+        "softkvm agent starting"
     );
 
     let addr: std::net::SocketAddr = server_addr.parse()?;
@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
                             input = format!("0x{input_source_vcp:02x}"),
                             "received switch command"
                         );
-                        let result = full_kvm_core::ddc::switch_with_retry(
+                        let result = softkvm_core::ddc::switch_with_retry(
                             ddc.as_ref(),
                             &monitor_id,
                             input_source_vcp,
@@ -157,12 +157,12 @@ fn hostname() -> String {
 
 #[cfg(feature = "stub-ddc")]
 fn create_controller() -> Box<dyn DdcController> {
-    Box::new(full_kvm_core::ddc::stub::StubDdcController::new())
+    Box::new(softkvm_core::ddc::stub::StubDdcController::new())
 }
 
 #[cfg(all(not(feature = "stub-ddc"), feature = "real-ddc"))]
 fn create_controller() -> Box<dyn DdcController> {
-    Box::new(full_kvm_core::ddc::real::RealDdcController::new())
+    Box::new(softkvm_core::ddc::real::RealDdcController::new())
 }
 
 #[cfg(all(not(feature = "stub-ddc"), not(feature = "real-ddc")))]
@@ -171,16 +171,16 @@ fn create_controller() -> Box<dyn DdcController> {
     impl DdcController for NullController {
         fn enumerate_monitors(
             &self,
-        ) -> full_kvm_core::error::Result<Vec<full_kvm_core::protocol::MonitorInfo>> {
+        ) -> softkvm_core::error::Result<Vec<softkvm_core::protocol::MonitorInfo>> {
             Ok(vec![])
         }
-        fn get_input_source(&self, id: &str) -> full_kvm_core::error::Result<u16> {
-            Err(full_kvm_core::error::FullKvmError::Ddc(format!(
+        fn get_input_source(&self, id: &str) -> softkvm_core::error::Result<u16> {
+            Err(softkvm_core::error::SoftKvmError::Ddc(format!(
                 "no DDC backend available for {id}"
             )))
         }
-        fn set_input_source(&self, id: &str, _value: u16) -> full_kvm_core::error::Result<()> {
-            Err(full_kvm_core::error::FullKvmError::Ddc(format!(
+        fn set_input_source(&self, id: &str, _value: u16) -> softkvm_core::error::Result<()> {
+            Err(softkvm_core::error::SoftKvmError::Ddc(format!(
                 "no DDC backend available for {id}"
             )))
         }

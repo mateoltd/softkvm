@@ -1,9 +1,9 @@
-use full_kvm_core::protocol::{DISCOVERY_MAGIC, DISCOVERY_PORT, discovery_response};
+use softkvm_core::protocol::{discovery_response, DISCOVERY_MAGIC, DISCOVERY_PORT};
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
 /// run the UDP discovery responder
-/// listens for FULLKVM_DISCOVER broadcasts and responds with server info
+/// listens for SOFTKVM_DISCOVER broadcasts and responds with server info
 pub async fn run_discovery_responder(
     server_name: String,
     version: String,

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
-use full_kvm_core::config::Config;
-use full_kvm_core::ddc::DdcController;
+use softkvm_core::config::Config;
+use softkvm_core::ddc::DdcController;
 use tokio::sync::mpsc;
 
 mod agent_listener;
@@ -13,10 +13,10 @@ mod log_parser;
 mod switch_engine;
 
 #[derive(Parser)]
-#[command(name = "full-kvm-orchestrator", about = "full-kvm orchestrator daemon")]
+#[command(name = "softkvm-orchestrator", about = "softkvm orchestrator daemon")]
 struct Cli {
     /// path to config file
-    #[arg(short, long, default_value = "full-kvm.toml")]
+    #[arg(short, long, default_value = "softkvm.toml")]
     config: String,
 
     /// skip spawning deskflow (for testing without deskflow installed)
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
     let engine = switch_engine::SwitchEngine::new(config.clone());
 
     // build OS lookup for machines (name -> OsType)
-    let machine_os: std::collections::HashMap<String, full_kvm_core::keymap::OsType> = config
+    let machine_os: std::collections::HashMap<String, softkvm_core::keymap::OsType> = config
         .machines
         .iter()
         .map(|m| (m.name.clone(), m.os))
@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
     let local_os = machine_os
         .get(&server_name)
         .copied()
-        .unwrap_or(full_kvm_core::keymap::OsType::Linux);
+        .unwrap_or(softkvm_core::keymap::OsType::Linux);
 
     // initialize key interceptor for combo-aware translation
     let interceptor = key_interceptor::KeyInterceptor::new(
@@ -201,17 +201,25 @@ async fn main() -> Result<()> {
 struct StubController;
 
 impl DdcController for StubController {
-    fn enumerate_monitors(&self) -> full_kvm_core::error::Result<Vec<full_kvm_core::protocol::MonitorInfo>> {
+    fn enumerate_monitors(
+        &self,
+    ) -> softkvm_core::error::Result<Vec<softkvm_core::protocol::MonitorInfo>> {
         Ok(vec![])
     }
 
-    fn get_input_source(&self, monitor_id: &str) -> full_kvm_core::error::Result<u16> {
+    fn get_input_source(&self, monitor_id: &str) -> softkvm_core::error::Result<u16> {
         tracing::debug!(monitor = monitor_id, "stub: get_input_source");
-        Err(full_kvm_core::error::FullKvmError::Ddc("stub controller".into()))
+        Err(softkvm_core::error::SoftKvmError::Ddc(
+            "stub controller".into(),
+        ))
     }
 
-    fn set_input_source(&self, monitor_id: &str, value: u16) -> full_kvm_core::error::Result<()> {
-        tracing::info!(monitor = monitor_id, input = format!("0x{:02x}", value), "stub: would switch monitor input");
+    fn set_input_source(&self, monitor_id: &str, value: u16) -> softkvm_core::error::Result<()> {
+        tracing::info!(
+            monitor = monitor_id,
+            input = format!("0x{:02x}", value),
+            "stub: would switch monitor input"
+        );
         Ok(())
     }
 }

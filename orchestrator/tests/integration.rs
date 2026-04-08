@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use full_kvm_core::ddc::DdcController;
-use full_kvm_core::protocol::{
+use softkvm_core::ddc::DdcController;
+use softkvm_core::protocol::{
     self, DaemonState, JsonRpcRequest, JsonRpcResponse, MachineState, Message, MonitorInfo,
     PROTOCOL_VERSION,
 };
@@ -29,7 +29,10 @@ async fn test_full_switch_flow() {
         // receive AgentHello
         let msg = protocol::read_message(&mut reader).await.unwrap();
         let agent_name = match msg {
-            Message::AgentHello { agent_name, version } => {
+            Message::AgentHello {
+                agent_name,
+                version,
+            } => {
                 assert_eq!(version, PROTOCOL_VERSION);
                 event_tx
                     .send(format!("connected:{agent_name}"))
@@ -174,7 +177,7 @@ async fn test_full_switch_flow() {
 /// IPC end-to-end: start IPC server, connect, get_state, switch_machine
 #[tokio::test]
 async fn test_ipc_end_to_end() {
-    let socket = format!("/tmp/full-kvm-integ-{}.sock", std::process::id());
+    let socket = format!("/tmp/softkvm-integ-{}.sock", std::process::id());
     let _ = std::fs::remove_file(&socket);
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
@@ -263,7 +266,10 @@ async fn test_ipc_end_to_end() {
 
     // get_state
     let req = r#"{"jsonrpc":"2.0","method":"get_state","id":1}"#;
-    stream.write_all(format!("{req}\n").as_bytes()).await.unwrap();
+    stream
+        .write_all(format!("{req}\n").as_bytes())
+        .await
+        .unwrap();
     stream.flush().await.unwrap();
     let mut buf = vec![0u8; 4096];
     let n = stream.read(&mut buf).await.unwrap();
@@ -275,8 +281,12 @@ async fn test_ipc_end_to_end() {
     assert_eq!(result["monitors"].as_array().unwrap().len(), 1);
 
     // switch_machine
-    let req = r#"{"jsonrpc":"2.0","method":"switch_machine","params":{"machine":"MacBook"},"id":2}"#;
-    stream.write_all(format!("{req}\n").as_bytes()).await.unwrap();
+    let req =
+        r#"{"jsonrpc":"2.0","method":"switch_machine","params":{"machine":"MacBook"},"id":2}"#;
+    stream
+        .write_all(format!("{req}\n").as_bytes())
+        .await
+        .unwrap();
     stream.flush().await.unwrap();
     let n = stream.read(&mut buf).await.unwrap();
     let resp: JsonRpcResponse = serde_json::from_slice(&buf[..n]).unwrap();
@@ -292,8 +302,8 @@ async fn test_ipc_end_to_end() {
 /// config -> topology -> switch pipeline test
 #[tokio::test]
 async fn test_config_topology_switch_pipeline() {
-    use full_kvm_core::config::Config;
-    use full_kvm_core::ddc::stub::StubDdcController;
+    use softkvm_core::config::Config;
+    use softkvm_core::ddc::stub::StubDdcController;
     use std::collections::HashMap;
 
     let toml = r#"
@@ -338,21 +348,17 @@ connected_to = "Windows-PC"
     // resolve the target input
     let target_input = transition_monitors[0].1;
     let aliases: HashMap<String, u16> = HashMap::new();
-    let source = full_kvm_core::input_source::InputSource::from_str_with_aliases(target_input, &aliases).unwrap();
+    let source =
+        softkvm_core::input_source::InputSource::from_str_with_aliases(target_input, &aliases)
+            .unwrap();
     let vcp = source.to_vcp_value(&aliases);
     assert_eq!(vcp, 0x11); // HDMI1
 
     // execute switch on stub controller
     let controller = StubDdcController::new();
-    let switched = full_kvm_core::ddc::switch_with_retry(
-        &controller,
-        "TEST:MON:001",
-        vcp,
-        false,
-        3,
-        10,
-    )
-    .unwrap();
+    let switched =
+        softkvm_core::ddc::switch_with_retry(&controller, "TEST:MON:001", vcp, false, 3, 10)
+            .unwrap();
     assert!(switched);
     assert_eq!(controller.get_input_source("TEST:MON:001").unwrap(), 0x11);
 }

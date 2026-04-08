@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::error::{FullKvmError, Result};
+use crate::error::{Result, SoftKvmError};
 use crate::keymap::KeyboardConfig;
 use crate::topology::{LayoutLinks, MachineConfig, MachineRole, MonitorConfig, Topology};
 
@@ -191,23 +191,57 @@ impl Default for DdcConfig {
 
 // --- Default value functions ---
 
-fn default_true() -> bool { true }
-fn default_log_level() -> String { "info".into() }
-fn default_deskflow_binary() -> String { "deskflow-core".into() }
-fn default_switch_delay() -> u32 { 250 }
-fn default_clipboard_size() -> u32 { 1024 }
-fn default_listen_port() -> u16 { 24801 }
-fn default_listen_address() -> String { "0.0.0.0".into() }
-fn default_reconnect_interval() -> u64 { 3000 }
-fn default_focus_lock_hotkey() -> String { "ScrollLock".into() }
-fn default_quick_switch_hotkey() -> String { "ctrl+alt+right".into() }
-fn default_quick_switch_back_hotkey() -> String { "ctrl+alt+left".into() }
-fn default_idle_timeout() -> u32 { 30 }
-fn default_toast_duration() -> u32 { 500 }
-fn default_retry_count() -> u32 { 3 }
-fn default_retry_delay() -> u64 { 50 }
-fn default_inter_command_delay() -> u64 { 40 }
-fn default_wake_delay() -> u64 { 3000 }
+fn default_true() -> bool {
+    true
+}
+fn default_log_level() -> String {
+    "info".into()
+}
+fn default_deskflow_binary() -> String {
+    "deskflow-core".into()
+}
+fn default_switch_delay() -> u32 {
+    250
+}
+fn default_clipboard_size() -> u32 {
+    1024
+}
+fn default_listen_port() -> u16 {
+    24801
+}
+fn default_listen_address() -> String {
+    "0.0.0.0".into()
+}
+fn default_reconnect_interval() -> u64 {
+    3000
+}
+fn default_focus_lock_hotkey() -> String {
+    "ScrollLock".into()
+}
+fn default_quick_switch_hotkey() -> String {
+    "ctrl+alt+right".into()
+}
+fn default_quick_switch_back_hotkey() -> String {
+    "ctrl+alt+left".into()
+}
+fn default_idle_timeout() -> u32 {
+    30
+}
+fn default_toast_duration() -> u32 {
+    500
+}
+fn default_retry_count() -> u32 {
+    3
+}
+fn default_retry_delay() -> u64 {
+    50
+}
+fn default_inter_command_delay() -> u64 {
+    40
+}
+fn default_wake_delay() -> u64 {
+    3000
+}
 
 // --- Validation ---
 
@@ -228,9 +262,13 @@ impl Config {
     /// Validate referential integrity of the configuration.
     pub fn validate(&self) -> Result<()> {
         // Check exactly one server
-        let server_count = self.machines.iter().filter(|m| m.role == MachineRole::Server).count();
+        let server_count = self
+            .machines
+            .iter()
+            .filter(|m| m.role == MachineRole::Server)
+            .count();
         if server_count != 1 {
-            return Err(FullKvmError::Config(format!(
+            return Err(SoftKvmError::Config(format!(
                 "expected exactly 1 server machine, found {server_count}"
             )));
         }
@@ -239,7 +277,7 @@ impl Config {
         let mut names = std::collections::HashSet::new();
         for machine in &self.machines {
             if !names.insert(&machine.name) {
-                return Err(FullKvmError::Config(format!(
+                return Err(SoftKvmError::Config(format!(
                     "duplicate machine name: {}",
                     machine.name
                 )));
@@ -249,14 +287,14 @@ impl Config {
         // Check monitor references
         for monitor in &self.monitors {
             if !names.contains(&monitor.connected_to) {
-                return Err(FullKvmError::Config(format!(
+                return Err(SoftKvmError::Config(format!(
                     "monitor '{}' references unknown machine '{}'",
                     monitor.name, monitor.connected_to
                 )));
             }
             for machine_name in monitor.inputs.keys() {
                 if !names.contains(machine_name) {
-                    return Err(FullKvmError::Config(format!(
+                    return Err(SoftKvmError::Config(format!(
                         "monitor '{}' has input mapping for unknown machine '{}'",
                         monitor.name, machine_name
                     )));
@@ -267,13 +305,16 @@ impl Config {
         // Check layout references
         for (machine_name, links) in &self.layout {
             if !names.contains(machine_name) {
-                return Err(FullKvmError::Config(format!(
+                return Err(SoftKvmError::Config(format!(
                     "layout references unknown machine '{machine_name}'"
                 )));
             }
-            for neighbor in [&links.left, &links.right, &links.up, &links.down].into_iter().flatten() {
+            for neighbor in [&links.left, &links.right, &links.up, &links.down]
+                .into_iter()
+                .flatten()
+            {
                 if !names.contains(neighbor) {
-                    return Err(FullKvmError::Config(format!(
+                    return Err(SoftKvmError::Config(format!(
                         "layout for '{machine_name}' references unknown machine '{neighbor}'"
                     )));
                 }

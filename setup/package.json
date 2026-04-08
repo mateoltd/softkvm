@@ -1,11 +1,11 @@
 {
-  "name": "full-kvm-setup",
+  "name": "softkvm-setup",
   "version": "0.1.0",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build --compile --outfile=dist/full-kvm-setup src/index.ts"
+    "build": "bun build --compile --outfile=dist/softkvm-setup src/index.ts"
   },
   "dependencies": {
     "@clack/prompts": "^0.10.0"

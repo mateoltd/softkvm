@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::error::{FullKvmError, Result};
+use crate::error::{Result, SoftKvmError};
 
 /// Message types for the orchestrator <-> agent wire protocol.
 /// Wire format: [4-byte big-endian length][1-byte type][payload]
@@ -21,33 +21,22 @@ pub enum Message {
     },
 
     /// Bidirectional: keepalive.
-    Heartbeat {
-        timestamp_ms: u64,
-    },
+    Heartbeat { timestamp_ms: u64 },
 
     /// Agent -> Orchestrator: report connected monitors.
-    MonitorInventory {
-        monitors: Vec<MonitorInfo>,
-    },
+    MonitorInventory { monitors: Vec<MonitorInfo> },
 
     /// Orchestrator -> Agent: ask agent to re-scan monitors.
     RequestInventory,
 
     /// Agent -> Orchestrator: initial identification.
-    AgentHello {
-        agent_name: String,
-        version: u16,
-    },
+    AgentHello { agent_name: String, version: u16 },
 
     /// Orchestrator -> Agent: accept connection.
-    OrchestratorHello {
-        version: u16,
-    },
+    OrchestratorHello { version: u16 },
 
     /// Agent -> Orchestrator: running applications list.
-    AppList {
-        apps: Vec<AppInfo>,
-    },
+    AppList { apps: Vec<AppInfo> },
 }
 
 /// Information about a monitor discovered via DDC/CI.
@@ -76,8 +65,8 @@ pub const PROTOCOL_VERSION: u16 = 1;
 
 /// Discovery protocol constants.
 pub const DISCOVERY_PORT: u16 = 24802;
-pub const DISCOVERY_MAGIC: &[u8] = b"FULLKVM_DISCOVER";
-pub const DISCOVERY_RESPONSE_PREFIX: &str = "FULLKVM_HERE";
+pub const DISCOVERY_MAGIC: &[u8] = b"SOFTKVM_DISCOVER";
+pub const DISCOVERY_RESPONSE_PREFIX: &str = "SOFTKVM_HERE";
 
 /// Format a discovery response.
 pub fn discovery_response(server_name: &str, version: &str, ip: &str, port: u16) -> String {
@@ -211,7 +200,7 @@ pub fn encode_message(msg: &Message) -> Result<Vec<u8>> {
 /// `frame` should include the type byte + JSON payload (NOT the 4-byte length header).
 pub fn decode_message(frame: &[u8]) -> Result<Message> {
     if frame.is_empty() {
-        return Err(FullKvmError::Protocol("empty frame".into()));
+        return Err(SoftKvmError::Protocol("empty frame".into()));
     }
     // skip the type byte (informational), deserialize from JSON
     let json_payload = &frame[1..];
@@ -226,10 +215,10 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Messag
     let payload_len = u32::from_be_bytes(len_buf);
 
     if payload_len == 0 {
-        return Err(FullKvmError::Protocol("zero-length frame".into()));
+        return Err(SoftKvmError::Protocol("zero-length frame".into()));
     }
     if payload_len > MAX_FRAME_SIZE {
-        return Err(FullKvmError::Protocol(format!(
+        return Err(SoftKvmError::Protocol(format!(
             "frame too large: {payload_len} bytes (max {MAX_FRAME_SIZE})"
         )));
     }
@@ -264,7 +253,7 @@ mod tests {
     #[test]
     fn test_discovery_invalid() {
         assert!(parse_discovery_response("garbage").is_none());
-        assert!(parse_discovery_response("FULLKVM_HERE:a:b").is_none());
+        assert!(parse_discovery_response("SOFTKVM_HERE:a:b").is_none());
     }
 
     // --- codec tests ---
@@ -272,12 +261,22 @@ mod tests {
     #[test]
     fn test_message_type_bytes_distinct() {
         let messages: Vec<Message> = vec![
-            Message::SwitchMonitor { monitor_id: "m".into(), input_source_vcp: 0x11 },
-            Message::SwitchAck { monitor_id: "m".into(), success: true, error: None },
+            Message::SwitchMonitor {
+                monitor_id: "m".into(),
+                input_source_vcp: 0x11,
+            },
+            Message::SwitchAck {
+                monitor_id: "m".into(),
+                success: true,
+                error: None,
+            },
             Message::Heartbeat { timestamp_ms: 0 },
             Message::MonitorInventory { monitors: vec![] },
             Message::RequestInventory,
-            Message::AgentHello { agent_name: "a".into(), version: 1 },
+            Message::AgentHello {
+                agent_name: "a".into(),
+                version: 1,
+            },
             Message::OrchestratorHello { version: 1 },
             Message::AppList { apps: vec![] },
         ];
@@ -325,7 +324,9 @@ mod tests {
 
     #[test]
     fn test_roundtrip_heartbeat() {
-        roundtrip(&Message::Heartbeat { timestamp_ms: 1234567890 });
+        roundtrip(&Message::Heartbeat {
+            timestamp_ms: 1234567890,
+        });
     }
 
     #[test]
@@ -358,7 +359,9 @@ mod tests {
 
     #[test]
     fn test_roundtrip_orchestrator_hello() {
-        roundtrip(&Message::OrchestratorHello { version: PROTOCOL_VERSION });
+        roundtrip(&Message::OrchestratorHello {
+            version: PROTOCOL_VERSION,
+        });
     }
 
     #[test]
@@ -441,7 +444,10 @@ mod tests {
         let (mut client, mut server) = tokio::io::duplex(8192);
 
         let messages = vec![
-            Message::AgentHello { agent_name: "test".into(), version: 1 },
+            Message::AgentHello {
+                agent_name: "test".into(),
+                version: 1,
+            },
             Message::Heartbeat { timestamp_ms: 100 },
             Message::RequestInventory,
         ];

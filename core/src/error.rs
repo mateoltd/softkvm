@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum FullKvmError {
+pub enum SoftKvmError {
     #[error("configuration error: {0}")]
     Config(String),
 
@@ -27,4 +27,4 @@ pub enum FullKvmError {
     SerdeJson(#[from] serde_json::Error),
 }
 
-pub type Result<T> = std::result::Result<T, FullKvmError>;
+pub type Result<T> = std::result::Result<T, SoftKvmError>;

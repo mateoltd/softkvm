@@ -7,7 +7,7 @@ export function TitleBar() {
       {isMac && <div className="w-20 shrink-0" />}
       <div className="flex-1 flex items-center justify-center">
         <span className="text-[11px] font-medium tracking-wide text-text-tertiary uppercase">
-          full-kvm
+          softkvm
         </span>
       </div>
       {/* spacer for Windows controls */}

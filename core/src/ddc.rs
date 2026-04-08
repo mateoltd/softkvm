@@ -81,16 +81,17 @@ pub fn switch_with_retry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        crate::error::FullKvmError::Ddc("no retry attempts made".into())
-    }))
+    Err(last_error
+        .unwrap_or_else(|| crate::error::SoftKvmError::Ddc("no retry attempts made".into())))
 }
 
 /// real DDC controller wrapping the ddc-hi crate
 #[cfg(feature = "real-ddc")]
 pub mod real {
     use super::*;
+    use ddc_hi::Ddc;
 
+    #[derive(Default)]
     pub struct RealDdcController;
 
     impl RealDdcController {
@@ -100,21 +101,9 @@ pub mod real {
 
         /// build a stable monitor ID from ddc-hi display info
         fn monitor_id(display: &ddc_hi::Display) -> String {
-            let mfg = display
-                .info
-                .manufacturer_id
-                .as_deref()
-                .unwrap_or("UNK");
-            let model = display
-                .info
-                .model_name
-                .as_deref()
-                .unwrap_or("UNK");
-            let serial = display
-                .info
-                .serial_number
-                .as_deref()
-                .unwrap_or("UNK");
+            let mfg = display.info.manufacturer_id.as_deref().unwrap_or("UNK");
+            let model = display.info.model_name.as_deref().unwrap_or("UNK");
+            let serial = display.info.serial_number.as_deref().unwrap_or("UNK");
             format!("{mfg}:{model}:{serial}")
         }
 
@@ -125,7 +114,7 @@ pub mod real {
                     return Ok(display);
                 }
             }
-            Err(crate::error::FullKvmError::MonitorNotFound(
+            Err(crate::error::SoftKvmError::MonitorNotFound(
                 monitor_id.into(),
             ))
         }
@@ -191,7 +180,7 @@ pub mod real {
                 .handle
                 .get_vcp_feature(VCP_INPUT_SOURCE)
                 .map_err(|e| {
-                    crate::error::FullKvmError::Ddc(format!(
+                    crate::error::SoftKvmError::Ddc(format!(
                         "failed to read input source for {monitor_id}: {e}"
                     ))
                 })?;
@@ -204,7 +193,7 @@ pub mod real {
                 .handle
                 .set_vcp_feature(VCP_INPUT_SOURCE, value)
                 .map_err(|e| {
-                    crate::error::FullKvmError::Ddc(format!(
+                    crate::error::SoftKvmError::Ddc(format!(
                         "failed to set input source for {monitor_id}: {e}"
                     ))
                 })
@@ -222,6 +211,12 @@ pub mod stub {
     pub struct StubDdcController {
         pub monitors: Mutex<HashMap<String, u16>>,
         pub fail_count: Mutex<u32>,
+    }
+
+    impl Default for StubDdcController {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl StubDdcController {
@@ -257,14 +252,14 @@ pub mod stub {
             monitors
                 .get(monitor_id)
                 .copied()
-                .ok_or_else(|| crate::error::FullKvmError::MonitorNotFound(monitor_id.into()))
+                .ok_or_else(|| crate::error::SoftKvmError::MonitorNotFound(monitor_id.into()))
         }
 
         fn set_input_source(&self, monitor_id: &str, value: u16) -> Result<()> {
             let mut fail_count = self.fail_count.lock().unwrap();
             if *fail_count > 0 {
                 *fail_count -= 1;
-                return Err(crate::error::FullKvmError::Ddc("simulated failure".into()));
+                return Err(crate::error::SoftKvmError::Ddc("simulated failure".into()));
             }
 
             let mut monitors = self.monitors.lock().unwrap();
@@ -272,7 +267,9 @@ pub mod stub {
                 monitors.insert(monitor_id.to_string(), value);
                 Ok(())
             } else {
-                Err(crate::error::FullKvmError::MonitorNotFound(monitor_id.into()))
+                Err(crate::error::SoftKvmError::MonitorNotFound(
+                    monitor_id.into(),
+                ))
             }
         }
     }

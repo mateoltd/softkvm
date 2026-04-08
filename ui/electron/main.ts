@@ -67,7 +67,7 @@ function createTray() {
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAARklEQVQ4y2NgGAWjIUABZGBsbPw/ISHhPzYMEkNXA9IMUoMNg8SQ1YDEsWGQGLIakBg2DFOMTc2oFwwfLxg0gXhUC4YPAAAU8SUZL3BXRQAAAABJRU5ErkJggg=="
   );
   tray = new Tray(icon);
-  tray.setToolTip("full-kvm");
+  tray.setToolTip("softkvm");
   updateTrayMenu();
 
   tray.on("click", () => {

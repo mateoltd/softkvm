@@ -1,5 +1,5 @@
 [package]
-name = "full-kvm-core"
+name = "softkvm-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use full_kvm_core::protocol::{self, Message, PROTOCOL_VERSION};
+use softkvm_core::protocol::{self, Message, PROTOCOL_VERSION};
 use tokio::io::BufReader;
 use tokio::net::TcpStream;
 
@@ -31,10 +31,7 @@ impl OrchestratorConnection {
         let response = protocol::read_message(&mut reader).await?;
         match response {
             Message::OrchestratorHello { version } => {
-                tracing::info!(
-                    server_version = version,
-                    "connected to orchestrator"
-                );
+                tracing::info!(server_version = version, "connected to orchestrator");
             }
             other => {
                 anyhow::bail!("expected OrchestratorHello, got {:?}", other);
@@ -84,11 +81,13 @@ pub async fn connect_with_retry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use full_kvm_core::protocol::{self, Message, MonitorInfo, PROTOCOL_VERSION};
+    use softkvm_core::protocol::{self, Message, MonitorInfo, PROTOCOL_VERSION};
     use tokio::net::TcpListener;
 
     /// mock orchestrator server
-    async fn mock_server(listener: TcpListener) -> (
+    async fn mock_server(
+        listener: TcpListener,
+    ) -> (
         BufReader<tokio::io::ReadHalf<TcpStream>>,
         tokio::io::WriteHalf<TcpStream>,
     ) {
@@ -103,7 +102,9 @@ mod tests {
         // send OrchestratorHello
         protocol::write_message(
             &mut writer,
-            &Message::OrchestratorHello { version: PROTOCOL_VERSION },
+            &Message::OrchestratorHello {
+                version: PROTOCOL_VERSION,
+            },
         )
         .await
         .unwrap();
@@ -117,7 +118,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
 
         let server = tokio::spawn(mock_server(listener));
-        let conn = OrchestratorConnection::connect(addr, "test-agent").await.unwrap();
+        let conn = OrchestratorConnection::connect(addr, "test-agent")
+            .await
+            .unwrap();
 
         let (_reader, _writer) = server.await.unwrap();
         drop(conn);
@@ -141,7 +144,9 @@ mod tests {
             }
         });
 
-        let mut conn = OrchestratorConnection::connect(addr, "inv-agent").await.unwrap();
+        let mut conn = OrchestratorConnection::connect(addr, "inv-agent")
+            .await
+            .unwrap();
         conn.send(&Message::MonitorInventory {
             monitors: vec![MonitorInfo {
                 id: "TST:MON:001".into(),
@@ -179,7 +184,9 @@ mod tests {
             (_reader, writer)
         });
 
-        let mut conn = OrchestratorConnection::connect(addr, "switch-agent").await.unwrap();
+        let mut conn = OrchestratorConnection::connect(addr, "switch-agent")
+            .await
+            .unwrap();
         let msg = conn.recv().await.unwrap();
         match msg {
             Message::SwitchMonitor {
@@ -206,8 +213,14 @@ mod tests {
             assert!(matches!(msg, Message::Heartbeat { .. }));
         });
 
-        let mut conn = OrchestratorConnection::connect(addr, "hb-agent").await.unwrap();
-        conn.send(&Message::Heartbeat { timestamp_ms: 99999 }).await.unwrap();
+        let mut conn = OrchestratorConnection::connect(addr, "hb-agent")
+            .await
+            .unwrap();
+        conn.send(&Message::Heartbeat {
+            timestamp_ms: 99999,
+        })
+        .await
+        .unwrap();
 
         server.await.unwrap();
     }

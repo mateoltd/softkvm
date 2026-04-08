@@ -1,6 +1,6 @@
-use full_kvm_core::config::Config;
-use full_kvm_core::ddc::{switch_with_retry, DdcController};
-use full_kvm_core::input_source::InputSource;
+use softkvm_core::config::Config;
+use softkvm_core::ddc::{switch_with_retry, DdcController};
+use softkvm_core::input_source::InputSource;
 
 use crate::log_parser::TransitionEvent;
 
@@ -101,7 +101,7 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use full_kvm_core::ddc::stub::StubDdcController;
+    use softkvm_core::ddc::stub::StubDdcController;
 
     const TEST_CONFIG: &str = r#"
 [general]
@@ -133,7 +133,7 @@ connected_to = "Windows-PC"
 
     #[test]
     fn test_handle_transition_local() {
-        let config = full_kvm_core::config::Config::from_toml(TEST_CONFIG).unwrap();
+        let config = softkvm_core::config::Config::from_toml(TEST_CONFIG).unwrap();
         let engine = SwitchEngine::new(config);
         let controller = StubDdcController::new();
 
