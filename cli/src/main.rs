@@ -40,7 +40,14 @@ enum Commands {
     /// show current system status
     Status,
     /// check for updates and apply them
-    Update,
+    Update {
+        /// build from source instead of downloading a release
+        #[arg(long)]
+        dev: bool,
+        /// skip pushing the update to connected agents
+        #[arg(long)]
+        no_push: bool,
+    },
     /// run interactive setup
     Setup,
     /// remove softkvm, its config, and registered services
@@ -61,7 +68,7 @@ async fn main() -> Result<()> {
         Commands::Identify { monitor_id } => commands::identify::run(monitor_id.as_deref()).await,
         Commands::ValidateConfig { config } => commands::validate::run(&config),
         Commands::Status => commands::status::run().await,
-        Commands::Update => commands::update::run().await,
+        Commands::Update { dev, no_push } => commands::update::run(dev, no_push).await,
         Commands::Setup => commands::setup::run().await,
         Commands::Uninstall { yes } => commands::uninstall::run(yes).await,
     }

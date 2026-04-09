@@ -141,6 +141,19 @@ async fn main() -> Result<()> {
                         let monitors = ddc.enumerate_monitors().unwrap_or_default();
                         let _ = conn.send(&Message::MonitorInventory { monitors }).await;
                     }
+                    Ok(Message::RequestUpdate { dev }) => {
+                        tracing::info!(dev = dev, "received update request from orchestrator");
+                        let (success, new_version, error) = run_self_update(dev);
+                        let _ = conn.send(&Message::UpdateAck {
+                            success,
+                            new_version,
+                            error,
+                        }).await;
+                        if success {
+                            tracing::info!("update complete, exiting for restart");
+                            break;
+                        }
+                    }
                     Ok(Message::Heartbeat { .. }) => {
                         // heartbeat echo from server, no action needed
                     }
@@ -201,6 +214,36 @@ fn spawn_deskflow_client(
         .kill_on_drop(true)
         .spawn()?;
     Ok(child)
+}
+
+fn run_self_update(dev: bool) -> (bool, Option<String>, Option<String>) {
+    let mut cmd = std::process::Command::new("softkvm");
+    cmd.arg("update").arg("--no-push");
+    if dev {
+        cmd.arg("--dev");
+    }
+    match cmd.output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if output.status.success() {
+                tracing::info!("self-update succeeded");
+                (true, Some(env!("CARGO_PKG_VERSION").to_string()), None)
+            } else {
+                let msg = if stderr.is_empty() {
+                    stdout.to_string()
+                } else {
+                    stderr.to_string()
+                };
+                tracing::error!(output = %msg, "self-update failed");
+                (false, None, Some(msg))
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to run softkvm update");
+            (false, None, Some(e.to_string()))
+        }
+    }
 }
 
 fn hostname() -> String {

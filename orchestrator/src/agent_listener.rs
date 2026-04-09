@@ -52,7 +52,6 @@ impl AgentManager {
 
     /// send a SwitchMonitor command to the agent controlling the given monitor.
     /// called when a remote monitor needs switching during a screen transition
-    #[allow(dead_code)]
     pub async fn send_switch(
         &self,
         agent_name: &str,
@@ -70,6 +69,18 @@ impl AgentManager {
         };
         let mut info = agent.lock().await;
         protocol::write_message(&mut info.writer, &msg).await?;
+        Ok(())
+    }
+
+    /// send a RequestUpdate to an agent
+    pub async fn send_update(&self, agent_name: &str, dev: bool) -> anyhow::Result<()> {
+        let agents = self.agents.read().await;
+        let agent = agents
+            .get(agent_name)
+            .ok_or_else(|| anyhow::anyhow!("agent '{}' not connected", agent_name))?;
+
+        let mut info = agent.lock().await;
+        protocol::write_message(&mut info.writer, &Message::RequestUpdate { dev }).await?;
         Ok(())
     }
 
@@ -239,6 +250,25 @@ async fn agent_message_loop(
                         error,
                     })
                     .await;
+            }
+            Message::UpdateAck {
+                success,
+                new_version,
+                error,
+            } => {
+                if success {
+                    tracing::info!(
+                        agent = info.name,
+                        version = new_version.as_deref().unwrap_or("unknown"),
+                        "agent updated successfully"
+                    );
+                } else {
+                    tracing::error!(
+                        agent = info.name,
+                        error = error.as_deref().unwrap_or("unknown"),
+                        "agent update failed"
+                    );
+                }
             }
             other => {
                 tracing::warn!(agent = info.name, msg = ?other, "unexpected message from agent");

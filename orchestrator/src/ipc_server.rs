@@ -11,6 +11,7 @@ pub enum IpcCommand {
     TestSwitch { monitor_id: String, input: String },
     SetFocusLock(bool),
     RescanMonitors,
+    PushUpdate { dev: bool },
 }
 
 /// shared state between the IPC server and the orchestrator main loop
@@ -199,6 +200,16 @@ async fn dispatch(req: &JsonRpcRequest, state: &IpcState) -> JsonRpcResponse {
         }
         "rescan_monitors" => {
             let _ = state.cmd_tx.send(IpcCommand::RescanMonitors).await;
+            JsonRpcResponse::success(req.id.clone(), serde_json::json!({"status": "ok"}))
+        }
+        "push_update" => {
+            let dev = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("dev"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let _ = state.cmd_tx.send(IpcCommand::PushUpdate { dev }).await;
             JsonRpcResponse::success(req.id.clone(), serde_json::json!({"status": "ok"}))
         }
         _ => JsonRpcResponse::error(

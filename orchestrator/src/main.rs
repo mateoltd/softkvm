@@ -359,6 +359,16 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
+                    Some(IpcCommand::PushUpdate { dev }) => {
+                        tracing::info!(dev = dev, "IPC: pushing update to agents");
+                        for agent in agent_manager.connected_agents().await {
+                            if let Err(e) = agent_manager.send_update(&agent, dev).await {
+                                tracing::warn!(agent = agent, error = %e, "failed to push update to agent");
+                            } else {
+                                tracing::info!(agent = agent, "update pushed");
+                            }
+                        }
+                    }
                     None => {
                         tracing::debug!("IPC command channel closed");
                     }

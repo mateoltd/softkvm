@@ -37,6 +37,16 @@ pub enum Message {
 
     /// Agent -> Orchestrator: running applications list.
     AppList { apps: Vec<AppInfo> },
+
+    /// Orchestrator -> Agent: request agent to self-update.
+    RequestUpdate { dev: bool },
+
+    /// Agent -> Orchestrator: result of self-update.
+    UpdateAck {
+        success: bool,
+        new_version: Option<String>,
+        error: Option<String>,
+    },
 }
 
 /// Information about a monitor discovered via DDC/CI.
@@ -182,6 +192,8 @@ pub fn message_type_byte(msg: &Message) -> u8 {
         Message::AgentHello { .. } => 0x06,
         Message::OrchestratorHello { .. } => 0x07,
         Message::AppList { .. } => 0x08,
+        Message::RequestUpdate { .. } => 0x09,
+        Message::UpdateAck { .. } => 0x0A,
     }
 }
 
@@ -279,13 +291,22 @@ mod tests {
             },
             Message::OrchestratorHello { version: 1 },
             Message::AppList { apps: vec![] },
+            Message::RequestUpdate { dev: false },
+            Message::UpdateAck {
+                success: true,
+                new_version: None,
+                error: None,
+            },
         ];
         let bytes: Vec<u8> = messages.iter().map(message_type_byte).collect();
         let mut unique = bytes.clone();
         unique.sort();
         unique.dedup();
         assert_eq!(bytes.len(), unique.len(), "type bytes must be unique");
-        assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+        assert_eq!(
+            bytes,
+            vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A]
+        );
     }
 
     fn roundtrip(msg: &Message) {
