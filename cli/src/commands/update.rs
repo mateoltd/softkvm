@@ -347,7 +347,11 @@ fn restart_daemons() {
     {
         for name in &["softkvm-orchestrator", "softkvm-agent"] {
             let label = format!("dev.softkvm.{name}");
-            let uid = unsafe { libc::getuid() };
+            let uid = Command::new("id")
+                .arg("-u")
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_else(|_| "501".into());
             let status = Command::new("launchctl")
                 .args(["kickstart", "-k", &format!("gui/{uid}/{label}")])
                 .status();
