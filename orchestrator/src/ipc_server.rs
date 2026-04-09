@@ -5,13 +5,14 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, RwLock};
 
 /// commands the IPC server sends back to the main event loop
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum IpcCommand {
     SwitchMachine(String),
     TestSwitch { monitor_id: String, input: String },
     SetFocusLock(bool),
     RescanMonitors,
     PushUpdate { dev: bool },
+    SetupTestSwitch { monitor_id: String, input_vcp: u16, reply: tokio::sync::oneshot::Sender<bool> },
 }
 
 /// shared state between the IPC server and the orchestrator main loop

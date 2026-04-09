@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use softkvm_core::protocol::{self, Message, MonitorInfo, PROTOCOL_VERSION};
+use softkvm_core::config::Config;
+use softkvm_core::protocol::{
+    self, DaemonState, Message, MonitorInfo, SetupMonitorMapping, PROTOCOL_VERSION,
+};
+use crate::ipc_server::IpcCommand;
 use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -40,13 +44,24 @@ pub enum AgentEvent {
 pub struct AgentManager {
     agents: Arc<RwLock<HashMap<String, Arc<Mutex<AgentInfo>>>>>,
     event_tx: mpsc::Sender<AgentEvent>,
+    daemon_state: Arc<RwLock<DaemonState>>,
+    config: Arc<Config>,
+    cmd_tx: mpsc::Sender<IpcCommand>,
 }
 
 impl AgentManager {
-    pub fn new(event_tx: mpsc::Sender<AgentEvent>) -> Self {
+    pub fn new(
+        event_tx: mpsc::Sender<AgentEvent>,
+        daemon_state: Arc<RwLock<DaemonState>>,
+        config: Arc<Config>,
+        cmd_tx: mpsc::Sender<IpcCommand>,
+    ) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
+            daemon_state,
+            config,
+            cmd_tx,
         }
     }
 
@@ -134,15 +149,18 @@ async fn handle_agent(stream: TcpStream, manager: AgentManager) -> anyhow::Resul
     let (reader, writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
 
-    // expect AgentHello
+    // expect AgentHello or SetupQuery
     let hello = protocol::read_message(&mut reader).await?;
     let (agent_name, agent_version) = match hello {
         Message::AgentHello {
             agent_name,
             version,
         } => (agent_name, version),
+        Message::SetupQuery => {
+            return handle_setup_session(reader, writer, &manager).await;
+        }
         other => {
-            anyhow::bail!("expected AgentHello, got {:?}", other);
+            anyhow::bail!("expected AgentHello or SetupQuery, got {:?}", other);
         }
     };
 
@@ -195,6 +213,98 @@ async fn handle_agent(stream: TcpStream, manager: AgentManager) -> anyhow::Resul
     tracing::info!(agent = agent_name, "agent disconnected");
 
     result
+}
+
+/// handle a setup wizard connection (not a regular agent)
+/// responds with server state and processes test switch requests
+async fn handle_setup_session(
+    mut reader: BufReader<tokio::io::ReadHalf<TcpStream>>,
+    mut writer: tokio::io::WriteHalf<TcpStream>,
+    manager: &AgentManager,
+) -> anyhow::Result<()> {
+    tracing::info!("setup wizard connected");
+
+    // build SetupInfo from daemon state and config
+    let ds = manager.daemon_state.read().await;
+    let server_name = manager
+        .config
+        .machines
+        .iter()
+        .find(|m| m.role == softkvm_core::topology::MachineRole::Server)
+        .map(|m| m.name.clone())
+        .unwrap_or_default();
+    let os = manager
+        .config
+        .machines
+        .iter()
+        .find(|m| m.role == softkvm_core::topology::MachineRole::Server)
+        .map(|m| m.os.to_string())
+        .unwrap_or_else(|| std::env::consts::OS.to_string());
+
+    let monitor_inputs: Vec<SetupMonitorMapping> = manager
+        .config
+        .monitors
+        .iter()
+        .map(|m| SetupMonitorMapping {
+            monitor_id: m.monitor_id.clone(),
+            inputs: m.inputs.clone(),
+        })
+        .collect();
+
+    let info = Message::SetupInfo {
+        server_name,
+        os,
+        monitors: ds.monitors.clone(),
+        monitor_inputs,
+    };
+    drop(ds);
+
+    protocol::write_message(&mut writer, &info).await?;
+
+    // handle follow-up messages (test switches) until disconnect
+    loop {
+        match protocol::read_message(&mut reader).await {
+            Ok(Message::SetupTestSwitch {
+                monitor_id,
+                input_vcp,
+            }) => {
+                tracing::info!(
+                    monitor = monitor_id,
+                    vcp = input_vcp,
+                    "setup wizard: test switch request"
+                );
+                // route through the main event loop for DDC execution
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let _ = manager
+                    .cmd_tx
+                    .send(IpcCommand::SetupTestSwitch {
+                        monitor_id: monitor_id.clone(),
+                        input_vcp,
+                        reply: tx,
+                    })
+                    .await;
+                let success = rx.await.unwrap_or(false);
+                protocol::write_message(
+                    &mut writer,
+                    &Message::SetupTestSwitchAck {
+                        monitor_id,
+                        input_vcp,
+                        success,
+                    },
+                )
+                .await?;
+            }
+            Ok(other) => {
+                tracing::debug!(msg = ?other, "unexpected message from setup wizard");
+            }
+            Err(_) => {
+                tracing::info!("setup wizard disconnected");
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn agent_message_loop(
@@ -297,13 +407,37 @@ mod tests {
     use softkvm_core::protocol::{self, Message, MonitorInfo, PROTOCOL_VERSION};
     use tokio::net::TcpStream;
 
+    fn test_config() -> Config {
+        let toml_str = r#"
+[general]
+role = "orchestrator"
+[deskflow]
+managed = false
+[network]
+listen_port = 24801
+[[machine]]
+name = "TestServer"
+role = "server"
+os = "linux"
+"#;
+        Config::from_toml(toml_str).unwrap()
+    }
+
     /// helper: start listener on ephemeral port, return address + manager + event rx
     async fn setup() -> (String, AgentManager, mpsc::Receiver<AgentEvent>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
 
         let (event_tx, event_rx) = mpsc::channel(32);
-        let manager = AgentManager::new(event_tx);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(32);
+        let daemon_state = Arc::new(RwLock::new(DaemonState {
+            machines: vec![],
+            monitors: vec![],
+            active_machine: None,
+            focus_locked: false,
+            deskflow_status: "stopped".into(),
+        }));
+        let manager = AgentManager::new(event_tx, daemon_state, Arc::new(test_config()), cmd_tx);
 
         let mgr = manager.clone();
         tokio::spawn(async move {

@@ -47,6 +47,30 @@ pub enum Message {
         new_version: Option<String>,
         error: Option<String>,
     },
+
+    /// Setup wizard -> Orchestrator: request server state for assisted setup
+    SetupQuery,
+
+    /// Orchestrator -> Setup wizard: server state for assisted setup
+    SetupInfo {
+        server_name: String,
+        os: String,
+        monitors: Vec<MonitorInfo>,
+        monitor_inputs: Vec<SetupMonitorMapping>,
+    },
+
+    /// Setup wizard -> Orchestrator: ask server to switch a monitor input
+    SetupTestSwitch {
+        monitor_id: String,
+        input_vcp: u16,
+    },
+
+    /// Orchestrator -> Setup wizard: result of a test switch
+    SetupTestSwitchAck {
+        monitor_id: String,
+        input_vcp: u16,
+        success: bool,
+    },
 }
 
 /// Information about a monitor discovered via DDC/CI.
@@ -70,6 +94,13 @@ pub struct AppInfo {
     pub icon_base64: Option<String>,
 }
 
+/// monitor input mapping from server config, used during assisted setup
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupMonitorMapping {
+    pub monitor_id: String,
+    pub inputs: std::collections::HashMap<String, String>,
+}
+
 /// Protocol version. Bump when wire format changes.
 pub const PROTOCOL_VERSION: u16 = 1;
 
@@ -79,14 +110,14 @@ pub const DISCOVERY_MAGIC: &[u8] = b"SOFTKVM_DISCOVER";
 pub const DISCOVERY_RESPONSE_PREFIX: &str = "SOFTKVM_HERE";
 
 /// Format a discovery response.
-pub fn discovery_response(server_name: &str, version: &str, ip: &str, port: u16) -> String {
-    format!("{DISCOVERY_RESPONSE_PREFIX}:{server_name}:{version}:{ip}:{port}")
+pub fn discovery_response(server_name: &str, version: &str, ip: &str, port: u16, os: &str) -> String {
+    format!("{DISCOVERY_RESPONSE_PREFIX}:{server_name}:{version}:{ip}:{port}:{os}")
 }
 
 /// Parse a discovery response.
 pub fn parse_discovery_response(msg: &str) -> Option<DiscoveryInfo> {
-    let parts: Vec<&str> = msg.splitn(5, ':').collect();
-    if parts.len() != 5 || parts[0] != DISCOVERY_RESPONSE_PREFIX {
+    let parts: Vec<&str> = msg.splitn(7, ':').collect();
+    if parts.len() != 6 || parts[0] != DISCOVERY_RESPONSE_PREFIX {
         return None;
     }
     Some(DiscoveryInfo {
@@ -94,6 +125,7 @@ pub fn parse_discovery_response(msg: &str) -> Option<DiscoveryInfo> {
         version: parts[2].to_string(),
         ip: parts[3].to_string(),
         port: parts[4].parse().ok()?,
+        os: parts[5].to_string(),
     })
 }
 
@@ -103,6 +135,7 @@ pub struct DiscoveryInfo {
     pub version: String,
     pub ip: String,
     pub port: u16,
+    pub os: String,
 }
 
 // --- JSON-RPC types for IPC (orchestrator <-> Electron UI) ---
@@ -194,6 +227,10 @@ pub fn message_type_byte(msg: &Message) -> u8 {
         Message::AppList { .. } => 0x08,
         Message::RequestUpdate { .. } => 0x09,
         Message::UpdateAck { .. } => 0x0A,
+        Message::SetupQuery => 0x0B,
+        Message::SetupInfo { .. } => 0x0C,
+        Message::SetupTestSwitch { .. } => 0x0D,
+        Message::SetupTestSwitchAck { .. } => 0x0E,
     }
 }
 
@@ -254,18 +291,20 @@ mod tests {
 
     #[test]
     fn test_discovery_roundtrip() {
-        let resp = discovery_response("Windows-PC", "0.1.0", "192.168.1.100", 24801);
+        let resp = discovery_response("Windows-PC", "0.1.0", "192.168.1.100", 24801, "windows");
         let info = parse_discovery_response(&resp).unwrap();
         assert_eq!(info.server_name, "Windows-PC");
         assert_eq!(info.version, "0.1.0");
         assert_eq!(info.ip, "192.168.1.100");
         assert_eq!(info.port, 24801);
+        assert_eq!(info.os, "windows");
     }
 
     #[test]
     fn test_discovery_invalid() {
         assert!(parse_discovery_response("garbage").is_none());
         assert!(parse_discovery_response("SOFTKVM_HERE:a:b").is_none());
+        assert!(parse_discovery_response("SOFTKVM_HERE:a:b:c:d").is_none());
     }
 
     // --- codec tests ---
@@ -297,6 +336,22 @@ mod tests {
                 new_version: None,
                 error: None,
             },
+            Message::SetupQuery,
+            Message::SetupInfo {
+                server_name: "s".into(),
+                os: "windows".into(),
+                monitors: vec![],
+                monitor_inputs: vec![],
+            },
+            Message::SetupTestSwitch {
+                monitor_id: "m".into(),
+                input_vcp: 0x11,
+            },
+            Message::SetupTestSwitchAck {
+                monitor_id: "m".into(),
+                input_vcp: 0x11,
+                success: true,
+            },
         ];
         let bytes: Vec<u8> = messages.iter().map(message_type_byte).collect();
         let mut unique = bytes.clone();
@@ -305,7 +360,7 @@ mod tests {
         assert_eq!(bytes.len(), unique.len(), "type bytes must be unique");
         assert_eq!(
             bytes,
-            vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A]
+            vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E]
         );
     }
 
@@ -394,6 +449,53 @@ mod tests {
                 pid: 1234,
                 icon_base64: None,
             }],
+        });
+    }
+
+    #[test]
+    fn test_roundtrip_setup_query() {
+        roundtrip(&Message::SetupQuery);
+    }
+
+    #[test]
+    fn test_roundtrip_setup_info() {
+        use std::collections::HashMap;
+        // use a single entry to avoid HashMap ordering issues in JSON comparison
+        let mut inputs = HashMap::new();
+        inputs.insert("Windows-PC".into(), "DisplayPort1".into());
+        roundtrip(&Message::SetupInfo {
+            server_name: "Windows-PC".into(),
+            os: "windows".into(),
+            monitors: vec![MonitorInfo {
+                id: "DEL:U2720Q:SN123".into(),
+                name: "Dell U2720Q".into(),
+                manufacturer: "Dell".into(),
+                model: "U2720Q".into(),
+                serial: "SN123".into(),
+                current_input_vcp: Some(0x0f),
+                ddc_supported: true,
+            }],
+            monitor_inputs: vec![SetupMonitorMapping {
+                monitor_id: "DEL:U2720Q:SN123".into(),
+                inputs,
+            }],
+        });
+    }
+
+    #[test]
+    fn test_roundtrip_setup_test_switch() {
+        roundtrip(&Message::SetupTestSwitch {
+            monitor_id: "DEL:U2720Q:SN123".into(),
+            input_vcp: 0x11,
+        });
+    }
+
+    #[test]
+    fn test_roundtrip_setup_test_switch_ack() {
+        roundtrip(&Message::SetupTestSwitchAck {
+            monitor_id: "DEL:U2720Q:SN123".into(),
+            input_vcp: 0x11,
+            success: true,
         });
     }
 

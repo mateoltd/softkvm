@@ -108,7 +108,7 @@ async fn main() -> Result<()> {
     let (ipc_cmd_tx, mut ipc_cmd_rx) = mpsc::channel::<IpcCommand>(32);
     let ipc_state = IpcState {
         daemon_state: daemon_state.clone(),
-        cmd_tx: ipc_cmd_tx,
+        cmd_tx: ipc_cmd_tx.clone(),
     };
     let ipc_socket = ipc_server::default_socket_path();
     let ipc_st = ipc_state.clone();
@@ -119,8 +119,14 @@ async fn main() -> Result<()> {
     });
 
     // -- agent listener for remote agent connections --
+    let config_arc = Arc::new(config.clone());
     let (agent_event_tx, mut agent_event_rx) = mpsc::channel::<AgentEvent>(32);
-    let agent_manager = AgentManager::new(agent_event_tx);
+    let agent_manager = AgentManager::new(
+        agent_event_tx,
+        daemon_state.clone(),
+        config_arc,
+        ipc_cmd_tx,
+    );
     let listen_addr = format!("0.0.0.0:{}", config.network.listen_port);
     let mgr = agent_manager.clone();
     tokio::spawn(async move {
@@ -157,11 +163,13 @@ async fn main() -> Result<()> {
     // -- discovery responder --
     let disc_name = server_name.clone();
     let disc_port = config.network.listen_port;
+    let disc_os = local_os.to_string();
     tokio::spawn(async move {
         if let Err(e) = discovery::run_discovery_responder(
             disc_name,
             env!("CARGO_PKG_VERSION").to_string(),
             disc_port,
+            disc_os,
         )
         .await
         {
@@ -368,6 +376,24 @@ async fn main() -> Result<()> {
                                 tracing::info!(agent = agent, "update pushed");
                             }
                         }
+                    }
+                    Some(IpcCommand::SetupTestSwitch { monitor_id, input_vcp, reply }) => {
+                        tracing::info!(monitor = monitor_id, vcp = input_vcp, "setup: test switch");
+                        let success = match softkvm_core::ddc::switch_with_retry(
+                            ddc.as_ref(),
+                            &monitor_id,
+                            input_vcp,
+                            false,
+                            config.ddc.retry_count,
+                            config.ddc.retry_delay_ms,
+                        ) {
+                            Ok(_) => true,
+                            Err(e) => {
+                                tracing::warn!(monitor = monitor_id, error = %e, "setup test switch failed");
+                                false
+                            }
+                        };
+                        let _ = reply.send(success);
                     }
                     None => {
                         tracing::debug!("IPC command channel closed");

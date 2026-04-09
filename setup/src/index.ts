@@ -4,8 +4,9 @@ import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { execSync, spawn } from "child_process";
 import { discoverServers, type ServerInfo } from "./discover";
-import { scanMonitors, KNOWN_INPUTS, detectedInputConfigValue, detectedInputLabel, monitorLabel, monitorHint, type MonitorInfo } from "./monitor-scan";
+import { scanMonitors, KNOWN_INPUTS, detectedInputConfigValue, detectedInputLabel, monitorLabel, monitorHint, knownInputByVcp, type MonitorInfo } from "./monitor-scan";
 import { generateConfig, type SetupAnswers, type MonitorSetup } from "./config-gen";
+import { queryServerSetupInfo, requestTestSwitch, type ServerSetupInfo } from "./ipc-client";
 
 // shell helper replacing Bun's $ tagged template (Node-compatible)
 function exec(cmd: string): string {
@@ -191,11 +192,12 @@ async function main() {
   let serverAddress: string | undefined;
   let serverName: string | undefined;
   let remoteOs: "windows" | "macos" | "linux" | undefined;
+  let selectedServer: ServerInfo | undefined;
+  let serverSetupInfo: ServerSetupInfo | null = null;
 
   if (role === "agent") {
     // agent needs to know the server
     if (hasServer) {
-      let selectedServer: ServerInfo;
       if (servers.length === 1) {
         selectedServer = servers[0];
       } else {
@@ -214,6 +216,9 @@ async function main() {
       }
       serverAddress = selectedServer.ip;
       serverName = selectedServer.name;
+
+      // auto-detect OS from discovery protocol
+      remoteOs = selectedServer.os as "windows" | "macos" | "linux";
     } else {
       // no server found, manual entry
       const addr = await p.text({
@@ -239,20 +244,44 @@ async function main() {
       serverName = name;
     }
 
-    // ask remote OS for the server machine
-    const ros = await p.select({
-      message: `what OS does "${serverName}" run?`,
-      options: [
-        { value: "windows", label: "Windows" },
-        { value: "macos", label: "macOS" },
-        { value: "linux", label: "Linux" },
-      ],
-    });
-    if (p.isCancel(ros)) {
-      p.cancel("setup cancelled");
-      process.exit(0);
+    // query the server for full setup info (monitors, inputs, OS)
+    if (serverAddress) {
+      const queryPort = selectedServer?.port ?? 24801;
+      spinner.start(`querying ${serverName ?? serverAddress} for setup info`);
+      serverSetupInfo = await queryServerSetupInfo(serverAddress, queryPort);
+      if (serverSetupInfo) {
+        // auto-fill from server state
+        if (!remoteOs) {
+          remoteOs = serverSetupInfo.os as "windows" | "macos" | "linux";
+        }
+        if (!serverName) {
+          serverName = serverSetupInfo.server_name;
+        }
+        const monCount = serverSetupInfo.monitors.length;
+        spinner.stop(
+          `${serverSetupInfo.server_name} is running ${serverSetupInfo.os} with ${monCount} monitor(s)`
+        );
+      } else {
+        spinner.stop("could not query server (will ask manually)");
+      }
     }
-    remoteOs = ros as "windows" | "macos" | "linux";
+
+    // if OS still unknown after discovery and IPC, ask manually
+    if (!remoteOs) {
+      const ros = await p.select({
+        message: `what OS does "${serverName}" run?`,
+        options: [
+          { value: "windows", label: "Windows" },
+          { value: "macos", label: "macOS" },
+          { value: "linux", label: "Linux" },
+        ],
+      });
+      if (p.isCancel(ros)) {
+        p.cancel("setup cancelled");
+        process.exit(0);
+      }
+      remoteOs = ros as "windows" | "macos" | "linux";
+    }
   } else {
     // server role: client name is optional, agents identify themselves on connect
     const wantClient = await p.confirm({
@@ -392,22 +421,110 @@ async function main() {
         localInputValue = li as string;
       }
 
-      // remote input: ask which input the other machine is on
+      // remote input: try to auto-detect from server, fall back to manual
       let remoteInputValue: string | undefined;
       if (serverName) {
-        const ri = await p.select({
-          message: `input on "${label}" connected to "${serverName}"?`,
-          options: KNOWN_INPUTS.map((inp) => ({
-            value: inp.value,
-            label: inp.label,
-            hint: inp.vcp,
-          })),
-        });
-        if (p.isCancel(ri)) {
-          p.cancel("setup cancelled");
-          process.exit(0);
+        // try auto-fill from server's config or DDC scan
+        if (serverSetupInfo) {
+          // check if server config already maps this monitor
+          const serverMapping = serverSetupInfo.monitor_inputs.find(
+            (m) => m.monitor_id === mon.id,
+          );
+          if (serverMapping && serverMapping.inputs[serverName]) {
+            remoteInputValue = serverMapping.inputs[serverName];
+            const known = KNOWN_INPUTS.find((inp) => inp.value === remoteInputValue);
+            const displayName = known ? `${known.label} (${known.vcp})` : remoteInputValue;
+            p.log.info(`${label}: ${serverName} is on ${displayName}`);
+          }
+
+          // check if server's DDC scan saw this monitor with a different input
+          if (!remoteInputValue) {
+            const serverMon = serverSetupInfo.monitors.find((m) => m.id === mon.id);
+            if (serverMon?.current_input_vcp != null) {
+              const serverVcpHex = `0x${serverMon.current_input_vcp.toString(16).padStart(2, "0")}`;
+              const known = knownInputByVcp(serverVcpHex);
+              if (known) {
+                remoteInputValue = known.value;
+                p.log.info(`${label}: ${serverName} is on ${known.label} (${known.vcp})`);
+              } else {
+                remoteInputValue = serverVcpHex;
+                p.log.info(`${label}: ${serverName} is on input ${serverVcpHex}`);
+              }
+            }
+          }
         }
-        remoteInputValue = ri as string;
+
+        // offer assisted detection if auto-fill didn't work but server is reachable
+        if (!remoteInputValue && serverSetupInfo && serverAddress) {
+          const useAssisted = await p.confirm({
+            message: `want ${serverName} to switch "${label}" so we can detect its input? (screen may flicker)`,
+            initialValue: true,
+          });
+          if (p.isCancel(useAssisted)) {
+            p.cancel("setup cancelled");
+            process.exit(0);
+          }
+
+          if (useAssisted) {
+            const queryPort = selectedServer?.port ?? 24801;
+            const localVcp = mon.current_input_vcp;
+
+            // try each candidate input that isn't the local one
+            const candidates = KNOWN_INPUTS.filter((inp) => inp.vcp !== localVcp);
+            spinner.start(`asking ${serverName} to switch "${label}"`);
+
+            for (const candidate of candidates) {
+              const vcpNum = parseInt(candidate.vcp, 16);
+              const ok = await requestTestSwitch(serverAddress, queryPort, mon.id, vcpNum);
+              if (!ok) continue;
+
+              // wait for DDC to take effect
+              await new Promise((r) => setTimeout(r, 2500));
+
+              // re-scan to check if our input changed
+              const refreshed = await scanMonitors();
+              const nowMon = refreshed.find((m) => m.id === mon.id);
+
+              if (!nowMon || nowMon.current_input_vcp !== localVcp) {
+                // monitor disappeared or input changed: this candidate is the server's input
+                remoteInputValue = candidate.value;
+                break;
+              }
+            }
+
+            // switch back to our input
+            if (localVcp) {
+              const localVcpNum = parseInt(localVcp, 16);
+              await requestTestSwitch(serverAddress, queryPort, mon.id, localVcpNum);
+              // wait for switch back
+              await new Promise((r) => setTimeout(r, 1500));
+            }
+
+            if (remoteInputValue) {
+              const known = KNOWN_INPUTS.find((inp) => inp.value === remoteInputValue);
+              spinner.stop(`detected: ${serverName} is on ${known?.label ?? remoteInputValue}`);
+            } else {
+              spinner.stop("could not auto-detect remote input");
+            }
+          }
+        }
+
+        // final fallback: manual selection
+        if (!remoteInputValue) {
+          const ri = await p.select({
+            message: `input on "${label}" connected to "${serverName}"?`,
+            options: KNOWN_INPUTS.map((inp) => ({
+              value: inp.value,
+              label: inp.label,
+              hint: inp.vcp,
+            })),
+          });
+          if (p.isCancel(ri)) {
+            p.cancel("setup cancelled");
+            process.exit(0);
+          }
+          remoteInputValue = ri as string;
+        }
       }
 
       monitorSetups.push({
@@ -491,18 +608,49 @@ async function main() {
     p.log.info(`start it manually: ${daemonBin} --config ${configPath}`);
   }
 
-  // show next steps
-  const notes = [];
-  if (daemonRole === "orchestrator" && !serverName) {
-    notes.push("run the installer on your other machine to set it up as a client");
-    notes.push("it will detect this server automatically");
-  }
-  notes.push("run `softkvm status` to check health");
-  notes.push("run `softkvm scan` to list detected monitors");
-  notes.push("run `softkvm setup` to reconfigure");
+  // show rich completion message
+  const completionLines: string[] = [];
 
-  p.note(notes.join("\n"), "next steps");
-  p.outro("setup complete");
+  completionLines.push("switch machines:");
+  completionLines.push("  move your cursor past the screen edge");
+  completionLines.push("  Ctrl+Alt+Right / Ctrl+Alt+Left  quick switch");
+  completionLines.push("  Scroll Lock                     toggle focus lock");
+  completionLines.push("");
+  completionLines.push("when you switch:");
+  completionLines.push("  keyboard and mouse move to the other machine");
+  if (monitorSetups.length > 0) {
+    completionLines.push("  monitor(s) physically switch input via DDC/CI");
+  }
+  completionLines.push("  clipboard is shared between machines");
+
+  // keyboard remapping info (only if cross-OS)
+  const localOs = detectOs();
+  if (remoteOs && remoteOs !== localOs) {
+    completionLines.push("");
+    completionLines.push("keyboard remapping (automatic):");
+    if (localOs === "macos" || remoteOs === "macos") {
+      completionLines.push("  Cmd <-> Ctrl, Option <-> Alt");
+      completionLines.push("  Cmd+Tab -> Alt+Tab, Cmd+Q -> Alt+F4");
+    } else {
+      completionLines.push("  modifier keys translated between OS pairs");
+    }
+  }
+
+  completionLines.push("");
+  completionLines.push("files and commands:");
+  completionLines.push(`  config:      ${join(dir2, "softkvm.toml")}`);
+  completionLines.push("  status:      softkvm status");
+  completionLines.push("  rescan:      softkvm scan");
+  completionLines.push("  reconfigure: softkvm setup");
+
+  if (daemonRole === "orchestrator" && !serverName) {
+    completionLines.push("");
+    completionLines.push("next: run the installer on your other machine");
+    completionLines.push("      it will detect this server automatically");
+  }
+
+  p.note(completionLines.join("\n"), "setup complete");
+  p.outro("softkvm is running");
   process.exit(0);
 }
 

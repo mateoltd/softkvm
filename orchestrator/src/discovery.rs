@@ -8,6 +8,7 @@ pub async fn run_discovery_responder(
     server_name: String,
     version: String,
     listen_port: u16,
+    os: String,
 ) -> anyhow::Result<()> {
     let socket = UdpSocket::bind(format!("0.0.0.0:{DISCOVERY_PORT}")).await?;
     socket.set_broadcast(true)?;
@@ -23,7 +24,7 @@ pub async fn run_discovery_responder(
 
             // determine our IP from the source address's perspective
             let local_ip = local_ip_for(&src);
-            let response = discovery_response(&server_name, &version, &local_ip, listen_port);
+            let response = discovery_response(&server_name, &version, &local_ip, listen_port, &os);
 
             if let Err(e) = socket.send_to(response.as_bytes(), src).await {
                 tracing::warn!(error = %e, "failed to send discovery response");
