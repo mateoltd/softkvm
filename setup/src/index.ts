@@ -129,6 +129,19 @@ async function main() {
     p.log.success(`deskflow-core found: ${deskflowPath}`);
   }
 
+  // macOS requires explicit permissions for deskflow to control keyboard/mouse
+  if (detectOs() === "macos") {
+    p.note(
+      "deskflow needs macOS permissions to share keyboard and mouse:\n\n" +
+      "  1. System Settings > Privacy & Security > Accessibility\n" +
+      "     add deskflow-core (or Deskflow.app)\n\n" +
+      "  2. System Settings > Privacy & Security > Input Monitoring\n" +
+      "     add deskflow-core (or Deskflow.app)\n\n" +
+      "without these, keyboard and mouse sharing will not work.",
+      "macOS permissions"
+    );
+  }
+
   // discover servers and agents on the network
   const spinner = p.spinner();
   spinner.start("scanning network for existing softkvm servers");
@@ -177,6 +190,7 @@ async function main() {
   // remote machine configuration
   let serverAddress: string | undefined;
   let serverName: string | undefined;
+  let remoteOs: "windows" | "macos" | "linux" | undefined;
 
   if (role === "agent") {
     // agent needs to know the server
@@ -224,12 +238,26 @@ async function main() {
       }
       serverName = name;
     }
+
+    // ask remote OS for the server machine
+    const ros = await p.select({
+      message: `what OS does "${serverName}" run?`,
+      options: [
+        { value: "windows", label: "Windows" },
+        { value: "macos", label: "macOS" },
+        { value: "linux", label: "Linux" },
+      ],
+    });
+    if (p.isCancel(ros)) {
+      p.cancel("setup cancelled");
+      process.exit(0);
+    }
+    remoteOs = ros as "windows" | "macos" | "linux";
   } else {
     // server role: client name is optional, agents identify themselves on connect
-    // TODO: discover agents on the network and let user pick
     const wantClient = await p.confirm({
       message: "do you want to configure a client machine now? (can be added later when it connects)",
-      initialValue: false,
+      initialValue: true,
     });
 
     if (p.isCancel(wantClient)) {
@@ -248,6 +276,20 @@ async function main() {
         process.exit(0);
       }
       serverName = name;
+
+      const ros = await p.select({
+        message: `what OS does "${name}" run?`,
+        options: [
+          { value: "windows", label: "Windows" },
+          { value: "macos", label: "macOS" },
+          { value: "linux", label: "Linux" },
+        ],
+      });
+      if (p.isCancel(ros)) {
+        p.cancel("setup cancelled");
+        process.exit(0);
+      }
+      remoteOs = ros as "windows" | "macos" | "linux";
     }
   }
 
@@ -350,10 +392,29 @@ async function main() {
         localInputValue = li as string;
       }
 
+      // remote input: ask which input the other machine is on
+      let remoteInputValue: string | undefined;
+      if (serverName) {
+        const ri = await p.select({
+          message: `input on "${label}" connected to "${serverName}"?`,
+          options: KNOWN_INPUTS.map((inp) => ({
+            value: inp.value,
+            label: inp.label,
+            hint: inp.vcp,
+          })),
+        });
+        if (p.isCancel(ri)) {
+          p.cancel("setup cancelled");
+          process.exit(0);
+        }
+        remoteInputValue = ri as string;
+      }
+
       monitorSetups.push({
         name: label,
         monitorId: mon.id,
         localInput: localInputValue!,
+        remoteInput: remoteInputValue,
       });
     }
   }
@@ -383,6 +444,7 @@ async function main() {
     role: role as "orchestrator" | "agent",
     machineName,
     os: detectOs(),
+    remoteOs,
     serverName,
     serverAddress,
     monitors: monitorSetups,
@@ -573,13 +635,14 @@ async function registerWindowsTask(name: string, binPath: string, configPath: st
   const val = `\\"${binPath}\\" --config \\"${configPath}\\"`;
   execQuiet(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d "${val}" /f`);
 
-  // add firewall rules for discovery (UDP) and agent connections (TCP)
+  // add firewall rules for discovery (UDP), agent connections (TCP), and deskflow (TCP)
   try {
     execQuiet(`netsh advfirewall firewall add rule name="softkvm discovery" dir=in action=allow protocol=UDP localport=24802`);
     execQuiet(`netsh advfirewall firewall add rule name="softkvm agent" dir=in action=allow protocol=TCP localport=24801`);
+    execQuiet(`netsh advfirewall firewall add rule name="softkvm deskflow" dir=in action=allow protocol=TCP localport=24800`);
   } catch (e) {
     p.log.warn(`could not add firewall rules (requires admin): ${e}`);
-    p.log.info("run as administrator or manually allow UDP 24802 and TCP 24801");
+    p.log.info("run as administrator or manually allow TCP 24800, TCP 24801, UDP 24802");
   }
   return true;
 }

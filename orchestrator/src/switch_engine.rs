@@ -37,6 +37,8 @@ impl SwitchEngine {
                     success: false,
                     error: Some(format!("unknown input source: {input_str}")),
                     local: monitor.connected_to == self.server_name(),
+                    connected_to: None,
+                    vcp: None,
                 });
                 continue;
             };
@@ -59,6 +61,8 @@ impl SwitchEngine {
                     success: result.is_ok(),
                     error: result.err().map(|e| e.to_string()),
                     local: true,
+                    connected_to: None,
+                    vcp: None,
                 });
             } else {
                 // remote monitor -- needs to be sent to the agent
@@ -73,6 +77,8 @@ impl SwitchEngine {
                     success: true, // will be confirmed by agent ack
                     error: None,
                     local: false,
+                    connected_to: Some(monitor.connected_to.clone()),
+                    vcp: Some(vcp),
                 });
             }
         }
@@ -96,6 +102,10 @@ pub struct SwitchResult {
     pub error: Option<String>,
     /// whether this switch was executed locally or needs remote agent
     pub local: bool,
+    /// for remote switches: the machine that controls this monitor's DDC
+    pub connected_to: Option<String>,
+    /// for remote switches: the VCP code to send
+    pub vcp: Option<u16>,
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ use softkvm_core::config::Config;
 use softkvm_core::ddc::DdcController;
 use softkvm_core::protocol::Message;
 use softkvm_core::topology::MachineRole;
+use tokio::process::Command;
 
 mod connection;
 
@@ -73,6 +74,33 @@ async fn main() -> Result<()> {
         monitors: monitors.clone(),
     })
     .await?;
+
+    // spawn deskflow client if managed
+    let mut deskflow_child: Option<tokio::process::Child> = None;
+    if config.deskflow.managed {
+        let deskflow_server_ip = addr.ip().to_string();
+        match spawn_deskflow_client(
+            &config.deskflow.binary_path,
+            &agent_name,
+            &deskflow_server_ip,
+        ) {
+            Ok(child) => {
+                deskflow_child = Some(child);
+                tracing::info!(
+                    server = deskflow_server_ip,
+                    name = agent_name,
+                    "deskflow-core client started"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "deskflow-core not available, running without mouse/keyboard sharing"
+                );
+                tracing::warn!("install deskflow and ensure deskflow-core is in PATH to enable it");
+            }
+        }
+    }
 
     // heartbeat interval
     let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(10));
@@ -147,8 +175,32 @@ async fn main() -> Result<()> {
         }
     }
 
+    // cleanup
+    if let Some(mut child) = deskflow_child {
+        tracing::info!("stopping deskflow-core client");
+        let _ = child.kill().await;
+    }
+
     tracing::info!("agent shut down");
     Ok(())
+}
+
+fn spawn_deskflow_client(
+    binary: &str,
+    screen_name: &str,
+    server_ip: &str,
+) -> Result<tokio::process::Child> {
+    let child = Command::new(binary)
+        .arg("--client")
+        .arg("--no-daemon")
+        .arg("--name")
+        .arg(screen_name)
+        .arg(server_ip)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()?;
+    Ok(child)
 }
 
 fn hostname() -> String {

@@ -2,6 +2,7 @@ export interface SetupAnswers {
   role: "orchestrator" | "agent";
   machineName: string;
   os: "windows" | "macos" | "linux";
+  remoteOs?: "windows" | "macos" | "linux";
   serverName?: string;
   serverAddress?: string;
   monitors: MonitorSetup[];
@@ -13,6 +14,7 @@ export interface MonitorSetup {
   name: string;
   monitorId: string;
   localInput: string;
+  remoteInput?: string;
 }
 
 export interface LayoutSetup {
@@ -48,7 +50,7 @@ export function generateConfig(answers: SetupAnswers): string {
   // remote machine (from server discovery or manual entry)
   if (answers.serverName) {
     const remoteRole = answers.role === "orchestrator" ? "client" : "server";
-    const remoteOs = answers.os === "macos" ? "windows" : "macos";
+    const remoteOs = answers.remoteOs ?? (answers.os === "macos" ? "windows" : "macos");
     lines.push(`[[machine]]`);
     lines.push(`name = "${answers.serverName}"`);
     lines.push(`role = "${remoteRole}"`);
@@ -65,6 +67,9 @@ export function generateConfig(answers: SetupAnswers): string {
     lines.push(``);
     lines.push(`[monitor.inputs]`);
     lines.push(`"${answers.machineName}" = "${mon.localInput}"`);
+    if (mon.remoteInput && answers.serverName) {
+      lines.push(`"${answers.serverName}" = "${mon.remoteInput}"`);
+    }
     lines.push(``);
   }
 

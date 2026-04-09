@@ -246,28 +246,7 @@ async fn main() -> Result<()> {
                             }
 
                             let results = engine.handle_transition(&event, ddc.as_ref());
-                            for r in &results {
-                                if !r.local {
-                                    // remote monitor: dispatch switch to the agent controlling it
-                                    // TODO: resolve which agent controls this monitor from topology
-                                    // for now, try to find an agent with a matching monitor
-                                    tracing::info!(
-                                        monitor = r.monitor_id,
-                                        "remote switch needed, dispatching to agent"
-                                    );
-                                } else if r.success {
-                                    tracing::info!(
-                                        monitor = r.monitor_id,
-                                        "monitor switched"
-                                    );
-                                } else if let Some(ref err) = r.error {
-                                    tracing::error!(
-                                        monitor = r.monitor_id,
-                                        error = err,
-                                        "monitor switch failed"
-                                    );
-                                }
-                            }
+                            dispatch_switch_results(&results, &agent_manager).await;
                         }
                     }
                     None => {
@@ -332,13 +311,7 @@ async fn main() -> Result<()> {
                         }
 
                         let results = engine.handle_transition(&event, ddc.as_ref());
-                        for r in &results {
-                            if r.success {
-                                tracing::info!(monitor = r.monitor_id, "monitor switched via IPC");
-                            } else if let Some(ref err) = r.error {
-                                tracing::error!(monitor = r.monitor_id, error = err, "IPC switch failed");
-                            }
-                        }
+                        dispatch_switch_results(&results, &agent_manager).await;
                     }
                     Some(IpcCommand::TestSwitch { monitor_id, input }) => {
                         tracing::info!(monitor = monitor_id, input = input, "IPC: test switch");
@@ -464,6 +437,45 @@ async fn main() -> Result<()> {
 
     tracing::info!("orchestrator shut down");
     Ok(())
+}
+
+/// dispatch switch results: execute remote switches via agent, log outcomes
+async fn dispatch_switch_results(
+    results: &[switch_engine::SwitchResult],
+    agent_manager: &AgentManager,
+) {
+    for r in results {
+        if !r.local {
+            if let (Some(ref agent_name), Some(vcp)) = (&r.connected_to, r.vcp) {
+                tracing::info!(
+                    monitor = r.monitor_id,
+                    agent = agent_name.as_str(),
+                    input = format!("0x{vcp:02x}"),
+                    "dispatching remote DDC switch"
+                );
+                if let Err(e) = agent_manager
+                    .send_switch(agent_name, &r.monitor_id, vcp)
+                    .await
+                {
+                    tracing::error!(
+                        monitor = r.monitor_id,
+                        agent = agent_name.as_str(),
+                        error = %e,
+                        "failed to dispatch remote switch"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    monitor = r.monitor_id,
+                    "remote switch needed but no agent info available"
+                );
+            }
+        } else if r.success {
+            tracing::info!(monitor = r.monitor_id, "monitor switched");
+        } else if let Some(ref err) = r.error {
+            tracing::error!(monitor = r.monitor_id, error = err, "monitor switch failed");
+        }
+    }
 }
 
 /// select the appropriate DDC controller based on build features

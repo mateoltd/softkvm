@@ -188,6 +188,15 @@ fn remove_firewall_rules() {
                 "name=softkvm agent",
             ])
             .output();
+        let _ = std::process::Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "delete",
+                "rule",
+                "name=softkvm deskflow",
+            ])
+            .output();
     }
 }
 
