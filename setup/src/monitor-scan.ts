@@ -14,7 +14,10 @@ export interface MonitorInfo {
 // scan for monitors by shelling out to softkvm scan --json
 export async function scanMonitors(): Promise<MonitorInfo[]> {
   try {
-    const result = execSync("softkvm scan --json", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    const result = execSync("softkvm scan --json", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     return JSON.parse(result.trim());
   } catch {
     // softkvm binary not available yet or no monitors found
@@ -35,7 +38,9 @@ export const KNOWN_INPUTS = [
 ];
 
 // find the known input matching a VCP hex string, or null
-export function knownInputByVcp(vcp: string | null): typeof KNOWN_INPUTS[number] | null {
+export function knownInputByVcp(
+  vcp: string | null,
+): (typeof KNOWN_INPUTS)[number] | null {
   if (!vcp) return null;
   return KNOWN_INPUTS.find((inp) => inp.vcp === vcp) ?? null;
 }

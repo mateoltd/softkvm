@@ -43,14 +43,17 @@ export function generateConfig(answers: SetupAnswers): string {
   // local machine
   lines.push(`[[machine]]`);
   lines.push(`name = "${answers.machineName}"`);
-  lines.push(`role = "${answers.role === "orchestrator" ? "server" : "client"}"`);
+  lines.push(
+    `role = "${answers.role === "orchestrator" ? "server" : "client"}"`,
+  );
   lines.push(`os = "${answers.os}"`);
   lines.push(``);
 
   // remote machine (from server discovery or manual entry)
   if (answers.serverName) {
     const remoteRole = answers.role === "orchestrator" ? "client" : "server";
-    const remoteOs = answers.remoteOs ?? (answers.os === "macos" ? "windows" : "macos");
+    const remoteOs =
+      answers.remoteOs ?? (answers.os === "macos" ? "windows" : "macos");
     lines.push(`[[machine]]`);
     lines.push(`name = "${answers.serverName}"`);
     lines.push(`role = "${remoteRole}"`);
@@ -83,10 +86,10 @@ export function generateConfig(answers: SetupAnswers): string {
     };
     lines.push(`[layout]`);
     lines.push(
-      `"${answers.machineName}" = { ${answers.layout.direction} = "${answers.layout.neighborName}" }`
+      `"${answers.machineName}" = { ${answers.layout.direction} = "${answers.layout.neighborName}" }`,
     );
     lines.push(
-      `"${answers.layout.neighborName}" = { ${opposite[answers.layout.direction]} = "${answers.machineName}" }`
+      `"${answers.layout.neighborName}" = { ${opposite[answers.layout.direction]} = "${answers.machineName}" }`,
     );
     lines.push(``);
   }

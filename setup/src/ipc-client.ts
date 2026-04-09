@@ -194,7 +194,9 @@ export async function requestTestSwitch(
     }
 
     const msg = json as Record<string, unknown>;
-    const ack = msg["SetupTestSwitchAck"] as Record<string, unknown> | undefined;
+    const ack = msg["SetupTestSwitchAck"] as
+      | Record<string, unknown>
+      | undefined;
     return ack?.["success"] === true;
   } catch {
     return false;

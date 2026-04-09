@@ -4,13 +4,33 @@ import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { execSync, spawn } from "child_process";
 import { discoverServers, type ServerInfo } from "./discover";
-import { scanMonitors, KNOWN_INPUTS, detectedInputConfigValue, detectedInputLabel, monitorLabel, monitorHint, knownInputByVcp, type MonitorInfo } from "./monitor-scan";
-import { generateConfig, type SetupAnswers, type MonitorSetup } from "./config-gen";
-import { queryServerSetupInfo, requestTestSwitch, type ServerSetupInfo } from "./ipc-client";
+import {
+  scanMonitors,
+  KNOWN_INPUTS,
+  detectedInputConfigValue,
+  detectedInputLabel,
+  monitorLabel,
+  monitorHint,
+  knownInputByVcp,
+  type MonitorInfo,
+} from "./monitor-scan";
+import {
+  generateConfig,
+  type SetupAnswers,
+  type MonitorSetup,
+} from "./config-gen";
+import {
+  queryServerSetupInfo,
+  requestTestSwitch,
+  type ServerSetupInfo,
+} from "./ipc-client";
 
 // shell helper replacing Bun's $ tagged template (Node-compatible)
 function exec(cmd: string): string {
-  return execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+  return execSync(cmd, {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
 }
 function execQuiet(cmd: string): void {
   execSync(cmd, { stdio: "ignore" });
@@ -30,12 +50,24 @@ function detectOs(): "windows" | "macos" | "linux" {
 function configDir(): string {
   const os = detectOs();
   if (os === "macos") {
-    return join(process.env.HOME ?? "~", "Library", "Application Support", "softkvm");
+    return join(
+      process.env.HOME ?? "~",
+      "Library",
+      "Application Support",
+      "softkvm",
+    );
   }
   if (os === "windows") {
-    return join(process.env.LOCALAPPDATA ?? join(process.env.HOME ?? "~", "AppData", "Local"), "softkvm");
+    return join(
+      process.env.LOCALAPPDATA ??
+        join(process.env.HOME ?? "~", "AppData", "Local"),
+      "softkvm",
+    );
   }
-  return join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "~", ".config"), "softkvm");
+  return join(
+    process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "~", ".config"),
+    "softkvm",
+  );
 }
 
 // identify a monitor by briefly blanking its screen
@@ -79,7 +111,8 @@ function assignUniqueLabels(monitors: MonitorInfo[]): Map<string, string> {
 function findDeskflowCore(): string | null {
   // check PATH
   try {
-    const cmd = detectOs() === "windows" ? "where deskflow-core" : "which deskflow-core";
+    const cmd =
+      detectOs() === "windows" ? "where deskflow-core" : "which deskflow-core";
     return exec(cmd).split("\n")[0] || null;
   } catch {}
 
@@ -119,7 +152,8 @@ async function main() {
     }
 
     const cont = await p.confirm({
-      message: "continue setup without deskflow? (DDC switching will work, but no mouse/keyboard sharing)",
+      message:
+        "continue setup without deskflow? (DDC switching will work, but no mouse/keyboard sharing)",
       initialValue: true,
     });
     if (p.isCancel(cont) || !cont) {
@@ -134,12 +168,12 @@ async function main() {
   if (detectOs() === "macos") {
     p.note(
       "deskflow needs macOS permissions to share keyboard and mouse:\n\n" +
-      "  1. System Settings > Privacy & Security > Accessibility\n" +
-      "     add deskflow-core (or Deskflow.app)\n\n" +
-      "  2. System Settings > Privacy & Security > Input Monitoring\n" +
-      "     add deskflow-core (or Deskflow.app)\n\n" +
-      "without these, keyboard and mouse sharing will not work.",
-      "macOS permissions"
+        "  1. System Settings > Privacy & Security > Accessibility\n" +
+        "     add deskflow-core (or Deskflow.app)\n\n" +
+        "  2. System Settings > Privacy & Security > Input Monitoring\n" +
+        "     add deskflow-core (or Deskflow.app)\n\n" +
+        "without these, keyboard and mouse sharing will not work.",
+      "macOS permissions",
     );
   }
 
@@ -150,7 +184,7 @@ async function main() {
   spinner.stop(
     servers.length > 0
       ? `found ${servers.length} server(s): ${servers.map((s) => `${s.name} (${s.ip})`).join(", ")}`
-      : "no servers found on the network"
+      : "no servers found on the network",
   );
 
   // choose role
@@ -161,7 +195,9 @@ async function main() {
       {
         value: hasServer ? "agent" : "orchestrator",
         label: hasServer ? "Client (recommended)" : "Server (recommended)",
-        hint: hasServer ? "server detected on your network" : "no server found, this will be the first",
+        hint: hasServer
+          ? "server detected on your network"
+          : "no server found, this will be the first",
       },
       {
         value: hasServer ? "orchestrator" : "agent",
@@ -224,7 +260,8 @@ async function main() {
       const addr = await p.text({
         message: "server IP address?",
         placeholder: "192.168.1.100",
-        validate: (v) => (v.length === 0 ? "address cannot be empty" : undefined),
+        validate: (v) =>
+          v.length === 0 ? "address cannot be empty" : undefined,
       });
       if (p.isCancel(addr)) {
         p.cancel("setup cancelled");
@@ -259,7 +296,7 @@ async function main() {
         }
         const monCount = serverSetupInfo.monitors.length;
         spinner.stop(
-          `${serverSetupInfo.server_name} is running ${serverSetupInfo.os} with ${monCount} monitor(s)`
+          `${serverSetupInfo.server_name} is running ${serverSetupInfo.os} with ${monCount} monitor(s)`,
         );
       } else {
         spinner.stop("could not query server (will ask manually)");
@@ -285,7 +322,8 @@ async function main() {
   } else {
     // server role: client name is optional, agents identify themselves on connect
     const wantClient = await p.confirm({
-      message: "do you want to configure a client machine now? (can be added later when it connects)",
+      message:
+        "do you want to configure a client machine now? (can be added later when it connects)",
       initialValue: true,
     });
 
@@ -327,9 +365,10 @@ async function main() {
   const allMonitors = await scanMonitors();
   const monitors = allMonitors.filter((m) => m.ddc_supported);
   const skipped = allMonitors.length - monitors.length;
-  let scanMsg = monitors.length > 0
-    ? `found ${monitors.length} monitor(s) with DDC/CI support`
-    : "no DDC/CI monitors detected (will configure manually later)";
+  let scanMsg =
+    monitors.length > 0
+      ? `found ${monitors.length} monitor(s) with DDC/CI support`
+      : "no DDC/CI monitors detected (will configure manually later)";
   if (skipped > 0) {
     scanMsg += ` (${skipped} without DDC/CI skipped)`;
   }
@@ -345,7 +384,8 @@ async function main() {
       let identifying = true;
       while (identifying) {
         const identifyChoice = await p.select({
-          message: "want to identify which screen is which? (blanks each monitor briefly)",
+          message:
+            "want to identify which screen is which? (blanks each monitor briefly)",
           options: [
             ...monitors.map((mon) => {
               const label = labels.get(mon.id) ?? mon.id;
@@ -366,7 +406,7 @@ async function main() {
           const mon = monitors.find((m) => m.id === identifyChoice)!;
           const label = labels.get(mon.id) ?? mon.id;
           p.log.warn(
-            `blanking "${label}" for 3 seconds. if your current screen goes dark, that's this one.`
+            `blanking "${label}" for 3 seconds. if your current screen goes dark, that's this one.`,
           );
           spinner.start(`blanking "${label}"...`);
           await identifyMonitor(mon.id);
@@ -432,23 +472,33 @@ async function main() {
           );
           if (serverMapping && serverMapping.inputs[serverName]) {
             remoteInputValue = serverMapping.inputs[serverName];
-            const known = KNOWN_INPUTS.find((inp) => inp.value === remoteInputValue);
-            const displayName = known ? `${known.label} (${known.vcp})` : remoteInputValue;
+            const known = KNOWN_INPUTS.find(
+              (inp) => inp.value === remoteInputValue,
+            );
+            const displayName = known
+              ? `${known.label} (${known.vcp})`
+              : remoteInputValue;
             p.log.info(`${label}: ${serverName} is on ${displayName}`);
           }
 
           // check if server's DDC scan saw this monitor with a different input
           if (!remoteInputValue) {
-            const serverMon = serverSetupInfo.monitors.find((m) => m.id === mon.id);
+            const serverMon = serverSetupInfo.monitors.find(
+              (m) => m.id === mon.id,
+            );
             if (serverMon?.current_input_vcp != null) {
               const serverVcpHex = `0x${serverMon.current_input_vcp.toString(16).padStart(2, "0")}`;
               const known = knownInputByVcp(serverVcpHex);
               if (known) {
                 remoteInputValue = known.value;
-                p.log.info(`${label}: ${serverName} is on ${known.label} (${known.vcp})`);
+                p.log.info(
+                  `${label}: ${serverName} is on ${known.label} (${known.vcp})`,
+                );
               } else {
                 remoteInputValue = serverVcpHex;
-                p.log.info(`${label}: ${serverName} is on input ${serverVcpHex}`);
+                p.log.info(
+                  `${label}: ${serverName} is on input ${serverVcpHex}`,
+                );
               }
             }
           }
@@ -470,12 +520,19 @@ async function main() {
             const localVcp = mon.current_input_vcp;
 
             // try each candidate input that isn't the local one
-            const candidates = KNOWN_INPUTS.filter((inp) => inp.vcp !== localVcp);
+            const candidates = KNOWN_INPUTS.filter(
+              (inp) => inp.vcp !== localVcp,
+            );
             spinner.start(`asking ${serverName} to switch "${label}"`);
 
             for (const candidate of candidates) {
               const vcpNum = parseInt(candidate.vcp, 16);
-              const ok = await requestTestSwitch(serverAddress, queryPort, mon.id, vcpNum);
+              const ok = await requestTestSwitch(
+                serverAddress,
+                queryPort,
+                mon.id,
+                vcpNum,
+              );
               if (!ok) continue;
 
               // wait for DDC to take effect
@@ -495,14 +552,23 @@ async function main() {
             // switch back to our input
             if (localVcp) {
               const localVcpNum = parseInt(localVcp, 16);
-              await requestTestSwitch(serverAddress, queryPort, mon.id, localVcpNum);
+              await requestTestSwitch(
+                serverAddress,
+                queryPort,
+                mon.id,
+                localVcpNum,
+              );
               // wait for switch back
               await new Promise((r) => setTimeout(r, 1500));
             }
 
             if (remoteInputValue) {
-              const known = KNOWN_INPUTS.find((inp) => inp.value === remoteInputValue);
-              spinner.stop(`detected: ${serverName} is on ${known?.label ?? remoteInputValue}`);
+              const known = KNOWN_INPUTS.find(
+                (inp) => inp.value === remoteInputValue,
+              );
+              spinner.stop(
+                `detected: ${serverName} is on ${known?.label ?? remoteInputValue}`,
+              );
             } else {
               spinner.stop("could not auto-detect remote input");
             }
@@ -565,9 +631,13 @@ async function main() {
     serverName,
     serverAddress,
     monitors: monitorSetups,
-    layout: direction && serverName
-      ? { direction: direction as "left" | "right" | "up" | "down", neighborName: serverName }
-      : undefined,
+    layout:
+      direction && serverName
+        ? {
+            direction: direction as "left" | "right" | "up" | "down",
+            neighborName: serverName,
+          }
+        : undefined,
     deskflowPath: deskflowPath ?? undefined,
   };
 
@@ -584,7 +654,8 @@ async function main() {
 
   // register as start-on-boot service and start the daemon
   const daemonRole = role as string;
-  const daemonBin = daemonRole === "orchestrator" ? "softkvm-orchestrator" : "softkvm-agent";
+  const daemonBin =
+    daemonRole === "orchestrator" ? "softkvm-orchestrator" : "softkvm-agent";
   const binPath = await findBinary(daemonBin);
 
   if (binPath) {
@@ -593,7 +664,7 @@ async function main() {
     spinner.stop(
       serviceOk
         ? "registered as start-on-boot service"
-        : "could not register start-on-boot (can be done manually later)"
+        : "could not register start-on-boot (can be done manually later)",
     );
 
     spinner.start(`starting ${daemonBin}`);
@@ -601,7 +672,7 @@ async function main() {
     spinner.stop(
       started
         ? `${daemonBin} is running`
-        : `could not start ${daemonBin} (start it manually with: ${daemonBin} --config ${configPath})`
+        : `could not start ${daemonBin} (start it manually with: ${daemonBin} --config ${configPath})`,
     );
   } else {
     p.log.warn(`${daemonBin} not found in PATH, skipping auto-start`);
@@ -661,9 +732,10 @@ async function findBinary(name: string): Promise<string | null> {
   const fullName = name + ext;
 
   // check known install directories first
-  const knownDirs = os === "windows"
-    ? [join(process.env.LOCALAPPDATA ?? "", "softkvm", "bin")]
-    : [join(process.env.HOME ?? "~", ".softkvm", "bin")];
+  const knownDirs =
+    os === "windows"
+      ? [join(process.env.LOCALAPPDATA ?? "", "softkvm", "bin")]
+      : [join(process.env.HOME ?? "~", ".softkvm", "bin")];
 
   for (const dir of knownDirs) {
     const candidate = join(dir, fullName);
@@ -684,9 +756,14 @@ async function findBinary(name: string): Promise<string | null> {
 }
 
 // register the daemon as a start-on-boot service
-async function registerService(role: string, binPath: string, configPath: string): Promise<boolean> {
+async function registerService(
+  role: string,
+  binPath: string,
+  configPath: string,
+): Promise<boolean> {
   const os = detectOs();
-  const serviceName = role === "orchestrator" ? "softkvm-orchestrator" : "softkvm-agent";
+  const serviceName =
+    role === "orchestrator" ? "softkvm-orchestrator" : "softkvm-agent";
 
   try {
     if (os === "macos") {
@@ -701,15 +778,26 @@ async function registerService(role: string, binPath: string, configPath: string
   }
 }
 
-async function registerLaunchAgent(name: string, binPath: string, configPath: string): Promise<boolean> {
+async function registerLaunchAgent(
+  name: string,
+  binPath: string,
+  configPath: string,
+): Promise<boolean> {
   const label = `dev.softkvm.${name}`;
   const plistDir = join(process.env.HOME ?? "~", "Library", "LaunchAgents");
   const plistPath = join(plistDir, `${label}.plist`);
-  const logPath = join(process.env.HOME ?? "~", "Library", "Logs", "softkvm.log");
+  const logPath = join(
+    process.env.HOME ?? "~",
+    "Library",
+    "Logs",
+    "softkvm.log",
+  );
 
   // unload existing service if present
   if (existsSync(plistPath)) {
-    try { execQuiet(`launchctl unload ${plistPath}`); } catch {}
+    try {
+      execQuiet(`launchctl unload ${plistPath}`);
+    } catch {}
   }
 
   if (!existsSync(plistDir)) {
@@ -744,15 +832,22 @@ async function registerLaunchAgent(name: string, binPath: string, configPath: st
   return true;
 }
 
-async function registerSystemdUser(name: string, binPath: string, configPath: string): Promise<boolean> {
+async function registerSystemdUser(
+  name: string,
+  binPath: string,
+  configPath: string,
+): Promise<boolean> {
   const unitDir = join(
     process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "~", ".config"),
-    "systemd", "user"
+    "systemd",
+    "user",
   );
   const unitPath = join(unitDir, `${name}.service`);
 
   // stop existing service if running
-  try { execQuiet(`systemctl --user stop ${name}`); } catch {}
+  try {
+    execQuiet(`systemctl --user stop ${name}`);
+  } catch {}
 
   if (!existsSync(unitDir)) {
     mkdirSync(unitDir, { recursive: true });
@@ -778,31 +873,50 @@ WantedBy=default.target
   return true;
 }
 
-async function registerWindowsTask(name: string, binPath: string, configPath: string): Promise<boolean> {
+async function registerWindowsTask(
+  name: string,
+  binPath: string,
+  configPath: string,
+): Promise<boolean> {
   // use HKCU Run key (no admin required, runs at user logon)
   const val = `\\"${binPath}\\" --config \\"${configPath}\\"`;
-  execQuiet(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d "${val}" /f`);
+  execQuiet(
+    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v ${name} /t REG_SZ /d "${val}" /f`,
+  );
 
   // add firewall rules for discovery (UDP), agent connections (TCP), and deskflow (TCP)
   try {
-    execQuiet(`netsh advfirewall firewall add rule name="softkvm discovery" dir=in action=allow protocol=UDP localport=24802`);
-    execQuiet(`netsh advfirewall firewall add rule name="softkvm agent" dir=in action=allow protocol=TCP localport=24801`);
-    execQuiet(`netsh advfirewall firewall add rule name="softkvm deskflow" dir=in action=allow protocol=TCP localport=24800`);
+    execQuiet(
+      `netsh advfirewall firewall add rule name="softkvm discovery" dir=in action=allow protocol=UDP localport=24802`,
+    );
+    execQuiet(
+      `netsh advfirewall firewall add rule name="softkvm agent" dir=in action=allow protocol=TCP localport=24801`,
+    );
+    execQuiet(
+      `netsh advfirewall firewall add rule name="softkvm deskflow" dir=in action=allow protocol=TCP localport=24800`,
+    );
   } catch (e) {
     p.log.warn(`could not add firewall rules (requires admin): ${e}`);
-    p.log.info("run as administrator or manually allow TCP 24800, TCP 24801, UDP 24802");
+    p.log.info(
+      "run as administrator or manually allow TCP 24800, TCP 24801, UDP 24802",
+    );
   }
   return true;
 }
 
 // start the daemon as a detached background process
-async function startDaemon(binPath: string, configPath: string): Promise<boolean> {
+async function startDaemon(
+  binPath: string,
+  configPath: string,
+): Promise<boolean> {
   const os = detectOs();
 
   try {
     if (os === "macos") {
       // launchctl already started it via load, verify it's running
-      const name = binPath.includes("orchestrator") ? "softkvm-orchestrator" : "softkvm-agent";
+      const name = binPath.includes("orchestrator")
+        ? "softkvm-orchestrator"
+        : "softkvm-agent";
       const label = `dev.softkvm.${name}`;
       try {
         const result = exec(`launchctl list ${label}`);
@@ -813,7 +927,9 @@ async function startDaemon(binPath: string, configPath: string): Promise<boolean
         return true;
       }
     } else if (os === "linux") {
-      const name = binPath.includes("orchestrator") ? "softkvm-orchestrator" : "softkvm-agent";
+      const name = binPath.includes("orchestrator")
+        ? "softkvm-orchestrator"
+        : "softkvm-agent";
       execQuiet(`systemctl --user start ${name}`);
       return true;
     } else {

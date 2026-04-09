@@ -35,7 +35,13 @@ export async function discoverServers(): Promise<ServerInfo[]> {
     socket.bind(0, () => {
       socket.setBroadcast(true);
       const message = Buffer.from(DISCOVERY_MAGIC);
-      socket.send(message, 0, message.length, DISCOVERY_PORT, "255.255.255.255");
+      socket.send(
+        message,
+        0,
+        message.length,
+        DISCOVERY_PORT,
+        "255.255.255.255",
+      );
     });
 
     setTimeout(() => {

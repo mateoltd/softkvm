@@ -8,11 +8,20 @@ use tokio::sync::{mpsc, RwLock};
 #[derive(Debug)]
 pub enum IpcCommand {
     SwitchMachine(String),
-    TestSwitch { monitor_id: String, input: String },
+    TestSwitch {
+        monitor_id: String,
+        input: String,
+    },
     SetFocusLock(bool),
     RescanMonitors,
-    PushUpdate { dev: bool },
-    SetupTestSwitch { monitor_id: String, input_vcp: u16, reply: tokio::sync::oneshot::Sender<bool> },
+    PushUpdate {
+        dev: bool,
+    },
+    SetupTestSwitch {
+        monitor_id: String,
+        input_vcp: u16,
+        reply: tokio::sync::oneshot::Sender<bool>,
+    },
 }
 
 /// shared state between the IPC server and the orchestrator main loop

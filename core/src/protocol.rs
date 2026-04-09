@@ -60,10 +60,7 @@ pub enum Message {
     },
 
     /// Setup wizard -> Orchestrator: ask server to switch a monitor input
-    SetupTestSwitch {
-        monitor_id: String,
-        input_vcp: u16,
-    },
+    SetupTestSwitch { monitor_id: String, input_vcp: u16 },
 
     /// Orchestrator -> Setup wizard: result of a test switch
     SetupTestSwitchAck {
@@ -110,7 +107,13 @@ pub const DISCOVERY_MAGIC: &[u8] = b"SOFTKVM_DISCOVER";
 pub const DISCOVERY_RESPONSE_PREFIX: &str = "SOFTKVM_HERE";
 
 /// Format a discovery response.
-pub fn discovery_response(server_name: &str, version: &str, ip: &str, port: u16, os: &str) -> String {
+pub fn discovery_response(
+    server_name: &str,
+    version: &str,
+    ip: &str,
+    port: u16,
+    os: &str,
+) -> String {
     format!("{DISCOVERY_RESPONSE_PREFIX}:{server_name}:{version}:{ip}:{port}:{os}")
 }
 
@@ -360,7 +363,9 @@ mod tests {
         assert_eq!(bytes.len(), unique.len(), "type bytes must be unique");
         assert_eq!(
             bytes,
-            vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E]
+            vec![
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E
+            ]
         );
     }
 

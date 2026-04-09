@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const REPO: &str = "mateoltd/softkvm";
@@ -262,7 +262,7 @@ fn build_from_source(install_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn rebuild_setup_wizard(install_dir: &PathBuf) {
+fn rebuild_setup_wizard(install_dir: &Path) {
     let setup_dir = install_dir
         .parent()
         .map(|p| p.join("setup"))
@@ -274,7 +274,7 @@ fn rebuild_setup_wizard(install_dir: &PathBuf) {
 }
 
 #[cfg(target_os = "windows")]
-fn rename_running_binaries(install_dir: &PathBuf) {
+fn rename_running_binaries(install_dir: &Path) {
     for bin in BINARIES {
         let path = install_dir.join(format!("{bin}.exe"));
         let old = install_dir.join(format!("{bin}.exe.old"));
@@ -285,7 +285,7 @@ fn rename_running_binaries(install_dir: &PathBuf) {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn rename_running_binaries(_install_dir: &PathBuf) {}
+fn rename_running_binaries(_install_dir: &Path) {}
 
 async fn push_to_agents(dev: bool) {
     println!();

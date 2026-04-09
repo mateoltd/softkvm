@@ -121,12 +121,8 @@ async fn main() -> Result<()> {
     // -- agent listener for remote agent connections --
     let config_arc = Arc::new(config.clone());
     let (agent_event_tx, mut agent_event_rx) = mpsc::channel::<AgentEvent>(32);
-    let agent_manager = AgentManager::new(
-        agent_event_tx,
-        daemon_state.clone(),
-        config_arc,
-        ipc_cmd_tx,
-    );
+    let agent_manager =
+        AgentManager::new(agent_event_tx, daemon_state.clone(), config_arc, ipc_cmd_tx);
     let listen_addr = format!("0.0.0.0:{}", config.network.listen_port);
     let mgr = agent_manager.clone();
     tokio::spawn(async move {
